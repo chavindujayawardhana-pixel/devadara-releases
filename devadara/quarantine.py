@@ -33,6 +33,7 @@ in this codebase calls it without you typing the id yourself.
 import hashlib
 import json
 import os
+import sys
 import uuid
 from datetime import datetime
 
@@ -43,6 +44,21 @@ QUARANTINE_DIR = os.path.join(PROJECT_ROOT, "data", "quarantine")
 INDEX_PATH = os.path.join(PROJECT_ROOT, "data", "quarantine_index.json")
 
 
+def _safe_print(text):
+    # Every message below can carry a real file path (file_path,
+    # destination, original_path, ...) - confirmed live that a real
+    # Windows file name can contain a character this console's codepage
+    # can't render (e.g. a literal Greek letter used stylistically in a
+    # filename), which crashes a plain print() with UnicodeEncodeError.
+    # Fall back to a lossy re-encode rather than crashing mid-quarantine
+    # over a display-only message.
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        print(str(text).encode(encoding, errors="replace").decode(encoding))
+
+
 def _load_index():
     if not os.path.exists(INDEX_PATH):
         return {}
@@ -50,7 +66,7 @@ def _load_index():
         with open(INDEX_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError:
-        print(f"[WARNING] Could not parse JSON in: {INDEX_PATH}")
+        _safe_print(f"[WARNING] Could not parse JSON in: {INDEX_PATH}")
         return {}
 
 
@@ -91,7 +107,7 @@ def quarantine_file(file_path, file_hash=None, threat_name=None, tier=None, sour
         with open(file_path, "rb") as f:
             original_bytes = f.read()
     except OSError as exc:
-        print(f"[QUARANTINE ERROR] Could not read '{file_path}': {exc}")
+        _safe_print(f"[QUARANTINE ERROR] Could not read '{file_path}': {exc}")
         return None
 
     key = Fernet.generate_key()
@@ -106,11 +122,11 @@ def quarantine_file(file_path, file_hash=None, threat_name=None, tier=None, sour
         with open(quarantine_path, "wb") as f:
             f.write(encrypted)
     except OSError as exc:
-        print(f"[QUARANTINE ERROR] Could not write quarantine file: {exc}")
+        _safe_print(f"[QUARANTINE ERROR] Could not write quarantine file: {exc}")
         return None
 
     if not _verify_roundtrip(quarantine_path, key, original_bytes):
-        print("[QUARANTINE ERROR] Verification failed after writing - original file left untouched.")
+        _safe_print("[QUARANTINE ERROR] Verification failed after writing - original file left untouched.")
         try:
             os.remove(quarantine_path)
         except OSError:
@@ -120,8 +136,8 @@ def quarantine_file(file_path, file_hash=None, threat_name=None, tier=None, sour
     try:
         os.remove(file_path)
     except OSError as exc:
-        print(f"[QUARANTINE WARNING] Quarantined a copy, but could not remove the original "
-              f"at '{file_path}': {exc}. The original is still there - remove it by hand.")
+        _safe_print(f"[QUARANTINE WARNING] Quarantined a copy, but could not remove the original "
+                    f"at '{file_path}': {exc}. The original is still there - remove it by hand.")
 
     index = _load_index()
     index[entry_id] = {
@@ -137,7 +153,7 @@ def quarantine_file(file_path, file_hash=None, threat_name=None, tier=None, sour
     }
     _save_index(index)
 
-    print(f"[QUARANTINE] Moved and encrypted: {file_path}")
+    _safe_print(f"[QUARANTINE] Moved and encrypted: {file_path}")
     return entry_id
 
 
@@ -165,13 +181,13 @@ def restore_file(entry_id, restore_path=None):
     index = _load_index()
     entry = index.get(entry_id)
     if entry is None:
-        print(f"[QUARANTINE ERROR] No quarantined file with id '{entry_id}'.")
+        _safe_print(f"[QUARANTINE ERROR] No quarantined file with id '{entry_id}'.")
         return False
 
     destination = restore_path or entry["original_path"]
     if os.path.exists(destination):
-        print(f"[QUARANTINE ERROR] '{destination}' already exists - won't overwrite. "
-              "Restore to a different path instead.")
+        _safe_print(f"[QUARANTINE ERROR] '{destination}' already exists - won't overwrite. "
+                    "Restore to a different path instead.")
         return False
 
     quarantine_path = os.path.join(QUARANTINE_DIR, entry["quarantine_filename"])
@@ -180,11 +196,11 @@ def restore_file(entry_id, restore_path=None):
             encrypted = f.read()
         decrypted = Fernet(entry["key"].encode("ascii")).decrypt(encrypted)
     except (OSError, InvalidToken) as exc:
-        print(f"[QUARANTINE ERROR] Could not decrypt quarantined file: {exc}")
+        _safe_print(f"[QUARANTINE ERROR] Could not decrypt quarantined file: {exc}")
         return False
 
     if entry.get("hash") and hashlib.sha256(decrypted).hexdigest() != entry["hash"]:
-        print("[QUARANTINE ERROR] Restored content doesn't match the recorded hash - refusing to write it out.")
+        _safe_print("[QUARANTINE ERROR] Restored content doesn't match the recorded hash - refusing to write it out.")
         return False
 
     os.makedirs(os.path.dirname(destination) or ".", exist_ok=True)
@@ -192,7 +208,7 @@ def restore_file(entry_id, restore_path=None):
         with open(destination, "wb") as f:
             f.write(decrypted)
     except OSError as exc:
-        print(f"[QUARANTINE ERROR] Could not write restored file to '{destination}': {exc}")
+        _safe_print(f"[QUARANTINE ERROR] Could not write restored file to '{destination}': {exc}")
         return False
 
     try:
@@ -202,7 +218,7 @@ def restore_file(entry_id, restore_path=None):
     del index[entry_id]
     _save_index(index)
 
-    print(f"[QUARANTINE] Restored to: {destination}")
+    _safe_print(f"[QUARANTINE] Restored to: {destination}")
     return True
 
 
@@ -217,19 +233,19 @@ def delete_permanently(entry_id):
     index = _load_index()
     entry = index.get(entry_id)
     if entry is None:
-        print(f"[QUARANTINE ERROR] No quarantined file with id '{entry_id}'.")
+        _safe_print(f"[QUARANTINE ERROR] No quarantined file with id '{entry_id}'.")
         return False
 
     quarantine_path = os.path.join(QUARANTINE_DIR, entry["quarantine_filename"])
     try:
         os.remove(quarantine_path)
     except OSError as exc:
-        print(f"[QUARANTINE ERROR] Could not delete quarantine file: {exc}")
+        _safe_print(f"[QUARANTINE ERROR] Could not delete quarantine file: {exc}")
         return False
 
     del index[entry_id]
     _save_index(index)
-    print(f"[QUARANTINE] Permanently deleted: {entry.get('original_path')}")
+    _safe_print(f"[QUARANTINE] Permanently deleted: {entry.get('original_path')}")
     return True
 
 

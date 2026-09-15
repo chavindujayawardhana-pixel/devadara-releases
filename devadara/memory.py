@@ -18,6 +18,7 @@ manages DEVADARA's own local JSON memory.
 
 import json
 import os
+import sys
 from datetime import datetime
 
 from devadara.hash_scanner import load_known_bad_hashes
@@ -25,6 +26,20 @@ from devadara.hash_scanner import load_known_bad_hashes
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KNOWN_BAD_HASHES_PATH = os.path.join(PROJECT_ROOT, "data", "known_bad_hashes.json")
 MEMORY_PATH = os.path.join(PROJECT_ROOT, "data", "memory_hashes.json")
+
+
+def _safe_print(text):
+    # threat_name can carry an arbitrary file name (see remember_threat) -
+    # confirmed live that a real file name (a Windows console can't render
+    # every character its own filesystem allows, e.g. a literal Greek
+    # letter used stylistically in a filename) crashes a plain print() with
+    # UnicodeEncodeError. Fall back to a lossy re-encode rather than
+    # crashing the caller over a display-only message.
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        encoding = sys.stdout.encoding or "utf-8"
+        print(str(text).encode(encoding, errors="replace").decode(encoding))
 
 
 def load_memory():
@@ -93,7 +108,7 @@ def remember_threat(file_hash, threat_name, source):
     }
 
     save_memory(memory)
-    print(f"[MEMORY] Remembered new threat: {threat_name} ({file_hash[:16]}...)")
+    _safe_print(f"[MEMORY] Remembered new threat: {threat_name} ({file_hash[:16]}...)")
 
 
 def forget_threat(file_hash):
@@ -106,7 +121,7 @@ def forget_threat(file_hash):
     if file_hash in memory:
         removed = memory.pop(file_hash)
         save_memory(memory)
-        print(f"[MEMORY] Forgot: {removed['threat_name']} ({file_hash[:16]}...)")
+        _safe_print(f"[MEMORY] Forgot: {removed['threat_name']} ({file_hash[:16]}...)")
     else:
         print("[MEMORY] That hash wasn't in memory.")
 
