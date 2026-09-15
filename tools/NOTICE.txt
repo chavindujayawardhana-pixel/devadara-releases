@@ -1,0 +1,16 @@
+yara64.exe
+==========
+
+Source:  https://github.com/VirusTotal/yara/releases/tag/v4.5.5
+Asset:   yara-4.5.5-2368-win64.zip (contains yara64.exe, yarac64.exe - only
+         yara64.exe is used/bundled here; the rule compiler isn't needed)
+Version: 4.5.5
+License: BSD-3-Clause (https://github.com/VirusTotal/yara/blob/master/COPYING)
+Project: YARA, maintained by VirusTotal - "the pattern matching swiss army knife"
+
+Why this is bundled as a binary instead of a pip dependency: the yara-python
+package has no prebuilt wheel for the Python version this project's venv
+runs (3.14, too new for yara-python 4.5.4's published wheels, which cover
+3.9-3.13), and building it from source needs MSVC Build Tools. Shelling out
+to the official standalone CLI avoids that entirely and needs no compiler -
+see devadara/yara_scanner.py.
