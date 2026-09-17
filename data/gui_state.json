@@ -1,0 +1,14 @@
+{
+  "realtime_protection_enabled": true,
+  "behavior_monitoring_enabled": true,
+  "downloads_autoscan_enabled": true,
+  "usb_autoscan_enabled": true,
+  "minimize_to_tray": false,
+  "notifications_enabled": true,
+  "notify_scan_completed": true,
+  "notify_threat_detected": true,
+  "notify_usb_scan_completed": true,
+  "notify_protection_status": true,
+  "last_scan_at": "2026-09-18T02:23:42",
+  "last_scan_summary": "Full Scan: No threats found"
+}
