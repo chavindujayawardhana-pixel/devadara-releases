@@ -43,13 +43,13 @@ from devadara_gui.icons import icon_label
 # app's real accent and muted-text tiers (see theme.py), used here instead
 # so the tree reads as the same system as the rest of the app rather than
 # its own palette.
-TREE_ACCENT = theme.KELLY_GREEN
-TEXT_CHECKED_PARENT = theme.TEXT_PRIMARY
-TEXT_CHECKED_CHILD = theme.TEXT_SECONDARY
-TEXT_UNCHECKED = theme.TEXT_DISABLED
-ARROW_COLOR = theme.KELLY_GREEN
-MODE_ACTIVE_TEXT = theme.TEXT_PRIMARY
-MODE_INACTIVE_TEXT = theme.STAT_LABEL_COLOR
+TREE_ACCENT = theme.CYBER_NEON
+TEXT_CHECKED_PARENT = theme.CYBER_TEXT_PRIMARY
+TEXT_CHECKED_CHILD = theme.CYBER_TEXT_SECONDARY
+TEXT_UNCHECKED = theme.CYBER_TEXT_MUTE
+ARROW_COLOR = theme.CYBER_NEON
+MODE_ACTIVE_TEXT = theme.CYBER_TEXT_PRIMARY
+MODE_INACTIVE_TEXT = theme.CYBER_TEXT_MUTE
 
 STATIC_TREE = [
     # Group rows carry an "icon" key naming an devadara_gui.icons.GLYPHS
@@ -129,8 +129,8 @@ class _TreeCheckBox(QCheckBox):
         self.setStyleSheet(f"""
             QCheckBox::indicator {{
                 width: 14px; height: 14px; border-radius: 3px;
-                border: 1px solid {theme.BORDER_STRONG};
-                background: rgba(0,0,0,0.25);
+                border: 1px solid {theme.CYBER_BORDER_STRONG};
+                background: {theme.CYBER_BG_INSET};
             }}
             QCheckBox::indicator:checked {{
                 border: 1px solid {TREE_ACCENT};
@@ -262,8 +262,8 @@ class ScanModeRow(QWidget):
                 QRadioButton {{ color: {color}; font-weight: {weight}; font-size: 12px; spacing: 6px; }}
                 QRadioButton::indicator {{
                     width: 13px; height: 13px; border-radius: 7px;
-                    border: 1px solid {theme.BORDER_STRONG};
-                    background: rgba(0,0,0,0.25);
+                    border: 1px solid {theme.CYBER_BORDER_STRONG};
+                    background: {theme.CYBER_BG_INSET};
                 }}
                 QRadioButton::indicator:checked {{
                     border: 1px solid {TREE_ACCENT};
@@ -317,7 +317,7 @@ class ScanTreeWidget(QWidget):
         self.tree_scroll.setStyleSheet(f"""
             #scanTreeBox {{
                 border-radius: {theme.RADIUS_CARD}px;
-                border: 1px solid {theme.NEUTRAL_CARD_BORDER};
+                border: 1px solid {theme.CYBER_BORDER_DEFAULT};
                 background: {theme.GRADIENT_NEUTRAL_CARD};
             }}
             #scanTreeBody {{ background: transparent; }}

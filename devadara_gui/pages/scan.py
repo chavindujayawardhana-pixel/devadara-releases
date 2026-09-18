@@ -140,7 +140,7 @@ class ScanPage(theme.PageCanvas):
         self.scan_button.setCursor(Qt.PointingHandCursor)
         self.scan_button.setFixedWidth(150)
         self.scan_button.setMinimumHeight(56)
-        theme.apply_glow(self.scan_button, theme.PRIMARY_SCAN_GLOW, blur=18)
+        theme.apply_glow(self.scan_button, theme.CYBER_GLOW_NEON, blur=18)
         self.scan_button.clicked.connect(self._on_scan_clicked)
         button_col.addWidget(self.scan_button)
 
@@ -210,7 +210,7 @@ class ScanPage(theme.PageCanvas):
         layout.addWidget(make_label(label_text, "metadataText"))
         layout.addStretch()
         value_label = make_label("0", "bodyText")
-        value_label.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        value_label.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         layout.addWidget(value_label)
         return row, value_label
 
@@ -239,7 +239,7 @@ class ScanPage(theme.PageCanvas):
 
         header_row = QHBoxLayout()
         title = make_label("Scanning your PC", "sectionTitle")
-        title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         header_row.addWidget(title)
         header_row.addStretch()
         self.minimize_button = QPushButton("— Minimize")
@@ -254,7 +254,7 @@ class ScanPage(theme.PageCanvas):
         location_card.addWidget(make_label("CURRENT LOCATION", "eyebrowLabel"))
         self.location_label = make_label("-", "metadataText")
         self.location_label.setStyleSheet(
-            f"font-family: Consolas, monospace; font-size: 12px; color: {theme.TEXT_SECONDARY};"
+            f"font-family: Consolas, monospace; font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};"
         )
         self.location_label.setWordWrap(False)
         location_card.addWidget(self.location_label)
@@ -262,7 +262,7 @@ class ScanPage(theme.PageCanvas):
         percent_row = QHBoxLayout()
         percent_row.setSpacing(12)
         self.percentage_label = make_label("", "displayText")
-        self.percentage_label.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {theme.TEXT_PRIMARY};")
+        self.percentage_label.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {theme.CYBER_TEXT_PRIMARY};")
         self.percentage_label.setFixedWidth(70)
         percent_row.addWidget(self.percentage_label)
         self.progress_bar = QProgressBar()
@@ -291,7 +291,7 @@ class ScanPage(theme.PageCanvas):
         self.fix_all_button = QPushButton("Fix All")
         self.fix_all_button.setObjectName("primaryButton")
         self.fix_all_button.setCursor(Qt.PointingHandCursor)
-        theme.apply_glow(self.fix_all_button, theme.ACCENT_GREEN, blur=18, alpha=130)
+        theme.apply_glow(self.fix_all_button, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
         self.fix_all_button.clicked.connect(self._on_fix_all_clicked)
         self.fix_all_button.hide()
         inner.addWidget(self.fix_all_button)
@@ -323,7 +323,7 @@ class ScanPage(theme.PageCanvas):
 
         header_row = QHBoxLayout()
         title = make_label("Scan Activity Log", "sectionTitle")
-        title.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         header_row.addWidget(title)
         header_row.addStretch()
         back_btn = QPushButton("← Back")
@@ -366,7 +366,7 @@ class ScanPage(theme.PageCanvas):
         name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
         word = _tier_result_word(tier)
         flagged = word == "flagged"
-        color = theme.TEXT_PRIMARY if flagged else theme.TEXT_SECONDARY
+        color = theme.CYBER_TEXT_PRIMARY if flagged else theme.CYBER_TEXT_SECONDARY
         weight = "700" if flagged else "400"
         label = make_label(f"✓ Checked: {name} — {word}", "bodyText")
         label.setStyleSheet(
@@ -389,7 +389,7 @@ class ScanPage(theme.PageCanvas):
         outer.setSpacing(theme.CARD_GAP)
 
         title = make_label("Scan completed", "sectionTitle")
-        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         outer.addWidget(title, alignment=Qt.AlignHCenter)
 
         self.completed_card = Card()
@@ -401,7 +401,7 @@ class ScanPage(theme.PageCanvas):
         self.done_button.setObjectName("primaryButton")
         self.done_button.setCursor(Qt.PointingHandCursor)
         self.done_button.clicked.connect(self._go_to_selection)
-        theme.apply_glow(self.done_button, theme.ACCENT_GREEN, blur=20, alpha=130)
+        theme.apply_glow(self.done_button, theme.CYBER_GLOW_NEON, blur=20, alpha=130)
         button_row.addWidget(self.done_button)
 
         self.review_button = QPushButton("Done")

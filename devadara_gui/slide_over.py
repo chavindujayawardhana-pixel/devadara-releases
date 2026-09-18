@@ -24,7 +24,7 @@ class SlideOverPanel(QWidget):
         self.setFixedWidth(PANEL_WIDTH)
         self.setStyleSheet(
             f"#cardRaised {{ background-color: {theme.GRADIENT_RAISED}; "
-            f"border-left: 1px solid {theme.BORDER_STRONG}; border-radius: 0px; }}"
+            f"border-left: 1px solid {theme.CYBER_BORDER_STRONG}; border-radius: 0px; }}"
         )
 
         self._outer = QVBoxLayout(self)

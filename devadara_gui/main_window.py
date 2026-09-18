@@ -52,10 +52,10 @@ class NavButton(QPushButton):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 12, 0)
         layout.setSpacing(10)
-        self._icon = icon_label(icon_name, size=15, color=theme.NAV_INACTIVE_ICON)
+        self._icon = icon_label(icon_name, size=15, color=theme.CYBER_TEXT_SECONDARY)
         layout.addWidget(self._icon)
         self._label = make_label(label, "bodyText")
-        self._label.setStyleSheet(f"color: {theme.NAV_INACTIVE_TEXT}; font-size: 12px; background: transparent;")
+        self._label.setStyleSheet(f"color: {theme.CYBER_TEXT_SECONDARY}; font-size: 12px; background: transparent;")
         layout.addWidget(self._label)
         layout.addStretch()
 
@@ -66,8 +66,8 @@ class NavButton(QPushButton):
         self.style().polish(self)
         # Exact reference values: active nav text #EFFFF6, active icon
         # #7CFFB2 - both distinct from the inactive #B7D9C4 / #7AA98C pair.
-        label_color = theme.NAV_ACTIVE_TEXT if checked else theme.NAV_INACTIVE_TEXT
-        icon_color = theme.NAV_ACTIVE_ICON if checked else theme.NAV_INACTIVE_ICON
+        label_color = theme.CYBER_NEON if checked else theme.CYBER_TEXT_SECONDARY
+        icon_color = theme.CYBER_NEON if checked else theme.CYBER_TEXT_SECONDARY
         self._icon.setStyleSheet(icon_style(icon_color))
         self._label.setStyleSheet(
             f"color: {label_color}; font-size: 12px; font-weight: {'600' if checked else '500'}; background: transparent;"
@@ -75,7 +75,7 @@ class NavButton(QPushButton):
         if checked:
             # box-shadow 0 0 12px rgba(60,220,140,0.25) - the reference's
             # exact active-nav-item glow value.
-            theme.apply_glow(self, theme.NAV_ACTIVE_GLOW, blur=12)
+            theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=12)
         else:
             theme.clear_glow(self)
 
@@ -84,7 +84,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DEVADARA")
-        self.setMinimumSize(1180, 720)
+        self.setMinimumSize(800, 520)
+        self.resize(900, 600)
 
         self.app_state = AppState()
 
@@ -163,8 +164,8 @@ class MainWindow(QMainWindow):
         logo_row.setContentsMargins(8, 0, 0, 0)
         logo_dot = QFrame()
         logo_dot.setFixedSize(26, 26)
-        logo_dot.setStyleSheet(f"background: {theme.GRADIENT_LOGO}; border-radius: 13px; border: none;")
-        theme.apply_glow(logo_dot, theme.LOGO_GLOW, blur=14)
+        logo_dot.setStyleSheet(f"background: {theme.CYBER_NEON}; border-radius: 13px; border: none;")
+        theme.apply_glow(logo_dot, theme.CYBER_GLOW_NEON, blur=14)
         logo_row.addWidget(logo_dot)
         logo_row.addWidget(make_label("DEVADARA", "sidebarLogo"))
         logo_row.addStretch()
@@ -226,7 +227,7 @@ class MainWindow(QMainWindow):
         active = self.app_state.is_realtime_protection_enabled()
         self.sidebar_status_dot.set_state("active" if active else "attention")
         self.sidebar_status_label.setText("Active" if active else "Off")
-        color = theme.ROW_ACTIVE_VALUE_COLOR if active else theme.TEXT_SECONDARY
+        color = theme.CYBER_NEON if active else theme.CYBER_TEXT_SECONDARY
         self.sidebar_status_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
 
     def navigate_to(self, key):

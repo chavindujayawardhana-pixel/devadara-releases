@@ -46,13 +46,13 @@ class SettingsNavButton(QPushButton):
         self._apply_style(False)
 
     def _apply_style(self, active):
-        color = theme.TEXT_PRIMARY if active else theme.TEXT_SECONDARY
-        border = f"border-left: 2px solid {theme.KELLY_GREEN};" if active else "border-left: 2px solid transparent;"
+        color = theme.CYBER_TEXT_PRIMARY if active else theme.CYBER_TEXT_SECONDARY
+        border = f"border-left: 2px solid {theme.CYBER_NEON};" if active else "border-left: 2px solid transparent;"
         weight = "600" if active else "500"
         self.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none; {border} text-align: left; "
             f"padding: 10px 14px; color: {color}; font-size: 13px; font-weight: {weight}; }}"
-            f"QPushButton:hover {{ color: {theme.TEXT_PRIMARY}; }}"
+            f"QPushButton:hover {{ color: {theme.CYBER_TEXT_PRIMARY}; }}"
         )
 
     def setChecked(self, checked):
@@ -293,13 +293,13 @@ class SettingsPage(theme.PageCanvas):
 
         logo_row = QHBoxLayout()
         logo_row.addStretch()
-        logo_row.addWidget(icon_label("logo", size=40, color=theme.ACCENT_GREEN))
+        logo_row.addWidget(icon_label("logo", size=40, color=theme.CYBER_NEON))
         logo_row.addStretch()
         card.addLayout(logo_row)
 
         name = make_label("DEVADARA", "sectionTitle")
         name.setAlignment(Qt.AlignCenter)
-        name.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {theme.TEXT_PRIMARY};")
+        name.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {theme.CYBER_TEXT_PRIMARY};")
         card.addWidget(name)
 
         version = make_label("Version 1.0.0", "metadataText")

@@ -1,0 +1,1844 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DEVADARA — Cyberpunk</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Consolas', 'SF Mono', 'Courier New', monospace; }
+
+  :root {
+    --bg: #0a0a0f;
+    --bg2: #0f0f1a;
+    --panel: #12122099;
+    --panel-solid: #121220;
+    --border: #1a3a3a;
+    --border-glow: #00ffaa33;
+    --neon: #00ffaa;
+    --neon-dim: #00cc88;
+    --cyan: #00e5ff;
+    --danger: #ff3355;
+    --warn: #ffcc00;
+    --text: #d4fff0;
+    --text-dim: #5a8a7a;
+    --text-mute: #3a5a4a;
+  }
+
+  html, body {
+    height: 100%; overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  body {
+    display: flex;
+    background: radial-gradient(circle at 20% 10%, #0a2a20 0%, #0a0a0f 50%),
+                radial-gradient(circle at 80% 90%, #1a0a2a 0%, transparent 50%);
+    position: relative;
+  }
+
+  /* Scanline effect */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 170, 0.02) 2px,
+      rgba(0, 255, 170, 0.02) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* Grid background */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 255, 170, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 170, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ─── APP SHELL ─── */
+  .app {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    z-index: 1;
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    width: 230px;
+    background: linear-gradient(180deg, #0d0d1a 0%, #060610 100%);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0 20px;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .sidebar::after {
+    content: '';
+    position: absolute;
+    top: 0; right: -1px; bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg, transparent, var(--neon), transparent);
+    opacity: 0.4;
+  }
+
+  .logo-wrap {
+    padding: 0 20px 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 20px;
+    cursor: pointer;
+  }
+
+  .logo-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    filter: drop-shadow(0 0 10px var(--neon));
+    flex-shrink: 0;
+  }
+
+  .logo-text { display: flex; flex-direction: column; line-height: 1; }
+  .logo-main {
+    font-size: 15px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--neon);
+    text-shadow: 0 0 12px var(--neon);
+  }
+  .logo-main .dim { color: var(--text); text-shadow: none; }
+  .logo-tag {
+    font-size: 8px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  .nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 0 10px;
+  }
+
+  .nav-section {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-mute);
+    padding: 14px 12px 6px;
+    text-transform: uppercase;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: transparent;
+    text-align: left;
+    width: 100%;
+    font-family: inherit;
+    letter-spacing: 1px;
+    transition: all 0.15s;
+    border-radius: 4px;
+    position: relative;
+    text-transform: uppercase;
+  }
+
+  .nav-item:hover {
+    color: var(--neon);
+    background: rgba(0, 255, 170, 0.05);
+    border-color: rgba(0, 255, 170, 0.2);
+  }
+
+  .nav-item.active {
+    color: var(--neon);
+    background: rgba(0, 255, 170, 0.1);
+    border-color: var(--neon);
+    box-shadow: 0 0 12px rgba(0, 255, 170, 0.3), inset 0 0 12px rgba(0, 255, 170, 0.1);
+  }
+
+  .nav-item.active::before {
+    content: '▶';
+    position: absolute;
+    left: -8px;
+    color: var(--neon);
+    font-size: 8px;
+    text-shadow: 0 0 8px var(--neon);
+  }
+
+  .nav-icon {
+    font-size: 14px;
+    width: 18px;
+    text-align: center;
+  }
+
+  .status-box {
+    margin: 0 10px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: rgba(0, 255, 170, 0.03);
+    font-size: 10px;
+  }
+
+  .status-label {
+    color: var(--text-mute);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    font-size: 9px;
+  }
+
+  .status-value {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--neon);
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-shadow: 0 0 8px var(--neon);
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--neon);
+    box-shadow: 0 0 10px var(--neon);
+    animation: blink 2s infinite;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  /* ─── MAIN ─── */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 30px 40px 60px;
+    position: relative;
+  }
+
+  .main::-webkit-scrollbar { width: 8px; }
+  .main::-webkit-scrollbar-track { background: transparent; }
+  .main::-webkit-scrollbar-thumb { background: var(--neon-dim); border-radius: 4px; }
+
+  .page { display: none; animation: fadeIn 0.3s; }
+  .page.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+  .page-header {
+    margin-bottom: 26px;
+    border-left: 3px solid var(--neon);
+    padding-left: 14px;
+  }
+
+  .page-title {
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: 4px;
+    color: var(--neon);
+    text-shadow: 0 0 20px var(--neon);
+    text-transform: uppercase;
+  }
+
+  .page-sub {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    letter-spacing: 1px;
+  }
+
+  /* ─── PANELS ─── */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 16px;
+    position: relative;
+    backdrop-filter: blur(10px);
+  }
+
+  .panel::before, .panel::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--neon);
+    opacity: 0.7;
+  }
+
+  .panel::before {
+    top: -1px; left: -1px;
+    border-right: none; border-bottom: none;
+  }
+
+  .panel::after {
+    bottom: -1px; right: -1px;
+    border-left: none; border-top: none;
+  }
+
+  .panel-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .panel-title span { color: var(--neon); }
+
+  /* ─── DASHBOARD ─── */
+  .hero {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    background: linear-gradient(135deg, rgba(0, 255, 170, 0.08) 0%, rgba(0, 229, 255, 0.04) 100%);
+    border: 1px solid var(--neon);
+    border-radius: 6px;
+    padding: 26px 30px;
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 0 30px rgba(0, 255, 170, 0.15), inset 0 0 40px rgba(0, 255, 170, 0.05);
+  }
+
+  .hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      90deg,
+      transparent 0px,
+      transparent 8px,
+      rgba(0, 255, 170, 0.03) 8px,
+      rgba(0, 255, 170, 0.03) 9px
+    );
+    pointer-events: none;
+  }
+
+  .hero-shield {
+    font-size: 52px;
+    filter: drop-shadow(0 0 16px var(--neon));
+    z-index: 1;
+  }
+
+  .hero-greeting {
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+
+  .hero-status {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--neon);
+    text-shadow: 0 0 20px var(--neon);
+    letter-spacing: 3px;
+    margin-bottom: 6px;
+  }
+
+  .hero-desc {
+    font-size: 12px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  .hero-desc .accent { color: var(--cyan); }
+
+  /* ─── STATS ─── */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 18px 20px;
+    position: relative;
+    transition: all 0.2s;
+    cursor: pointer;
+    overflow: hidden;
+  }
+
+  .stat-card:hover {
+    border-color: var(--neon);
+    box-shadow: 0 0 20px rgba(0, 255, 170, 0.2);
+    transform: translateY(-2px);
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--neon);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .stat-card:hover::before { opacity: 1; }
+
+  .stat-label {
+    font-size: 9px;
+    letter-spacing: 2px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .stat-value {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--neon);
+    text-shadow: 0 0 14px var(--neon);
+    letter-spacing: 1px;
+  }
+
+  .stat-card.danger .stat-value {
+    color: var(--danger);
+    text-shadow: 0 0 14px var(--danger);
+  }
+
+  .stat-card.warn .stat-value {
+    color: var(--warn);
+    text-shadow: 0 0 14px var(--warn);
+  }
+
+  /* ─── ACTION CARDS ─── */
+  .actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+  }
+
+  .action-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 18px;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    position: relative;
+  }
+
+  .action-card:hover {
+    border-color: var(--neon);
+    box-shadow: 0 0 24px rgba(0, 255, 170, 0.25), inset 0 0 20px rgba(0, 255, 170, 0.05);
+    transform: translateX(4px);
+  }
+
+  .action-card:hover::after {
+    content: '»';
+    position: absolute;
+    right: 14px;
+    color: var(--neon);
+    font-size: 18px;
+    text-shadow: 0 0 8px var(--neon);
+  }
+
+  .action-icon {
+    font-size: 26px;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 255, 170, 0.08);
+    border: 1px solid rgba(0, 255, 170, 0.2);
+    border-radius: 4px;
+    filter: drop-shadow(0 0 6px rgba(0, 255, 170, 0.5));
+  }
+
+  .action-title {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .action-desc {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── SCAN ─── */
+  .radio-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .radio-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-dim);
+    user-select: none;
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: all 0.15s;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .radio-item:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+  }
+
+  .radio-item.active {
+    color: var(--neon);
+    border-color: var(--neon);
+    background: rgba(0, 255, 170, 0.08);
+    box-shadow: 0 0 14px rgba(0, 255, 170, 0.25);
+  }
+
+  .radio-item input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border: 2px solid var(--text-mute);
+    border-radius: 50%;
+    background: transparent;
+    cursor: pointer;
+    margin: 0;
+    position: relative;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+
+  .radio-item.active input {
+    border-color: var(--neon);
+    box-shadow: 0 0 10px var(--neon);
+  }
+
+  .radio-item input:checked::after {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--neon);
+    box-shadow: 0 0 8px var(--neon);
+  }
+
+  .scan-content {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+
+  .tree-container {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px;
+    max-height: 340px;
+    overflow-y: auto;
+    font-size: 12px;
+  }
+
+  .tree-container::-webkit-scrollbar { width: 8px; }
+  .tree-container::-webkit-scrollbar-track { background: transparent; }
+  .tree-container::-webkit-scrollbar-thumb { background: var(--neon-dim); border-radius: 4px; }
+
+  .tree-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: 3px;
+    user-select: none;
+    letter-spacing: 0.5px;
+    transition: background 0.12s;
+    font-size: 12px;
+  }
+
+  .tree-item:hover {
+    background: rgba(0, 255, 170, 0.06);
+  }
+
+  .tree-indent { padding-left: 34px; }
+
+  .tree-arrow {
+    color: var(--neon);
+    font-size: 9px;
+    width: 12px;
+    flex-shrink: 0;
+    text-shadow: 0 0 6px var(--neon);
+  }
+
+  .tree-icon {
+    font-size: 13px;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 4px rgba(0, 255, 170, 0.5));
+  }
+
+  .tree-item input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid var(--text-mute);
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+    margin: 0;
+    transition: all 0.15s;
+  }
+
+  .tree-item input[type="checkbox"]:checked {
+    border-color: var(--neon);
+    background: rgba(0, 255, 170, 0.15);
+    box-shadow: 0 0 10px rgba(0, 255, 170, 0.4);
+  }
+
+  .tree-item input[type="checkbox"]:checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 11px;
+    color: var(--neon);
+    font-weight: bold;
+    text-shadow: 0 0 6px var(--neon);
+  }
+
+  .scan-btn {
+    background: transparent;
+    color: var(--neon);
+    border: 2px solid var(--neon);
+    border-radius: 4px;
+    padding: 18px 40px;
+    font-size: 14px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.2s;
+    text-shadow: 0 0 10px var(--neon);
+    box-shadow: 0 0 20px rgba(0, 255, 170, 0.3), inset 0 0 20px rgba(0, 255, 170, 0.05);
+    position: relative;
+  }
+
+  .scan-btn:hover {
+    background: var(--neon);
+    color: #000;
+    text-shadow: none;
+    box-shadow: 0 0 40px var(--neon), 0 0 80px rgba(0, 255, 170, 0.5);
+  }
+
+  /* ─── SCANNING STATE ─── */
+  .scan-scanning { display: none; }
+  .scan-scanning.active { display: block; }
+
+  .scanning-title {
+    font-size: 20px;
+    font-weight: 900;
+    color: var(--neon);
+    text-shadow: 0 0 16px var(--neon);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+  }
+
+  .progress-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--text-mute);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .path-text {
+    font-size: 12px;
+    color: var(--cyan);
+    margin-bottom: 14px;
+    word-break: break-all;
+    min-height: 16px;
+    padding: 10px 12px;
+    background: rgba(0, 229, 255, 0.05);
+    border-left: 2px solid var(--cyan);
+    letter-spacing: 0.5px;
+  }
+
+  .path-text::before { content: '> '; color: var(--neon); }
+
+  .progress-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+
+  .progress-percent {
+    font-size: 22px;
+    font-weight: 900;
+    color: var(--neon);
+    text-shadow: 0 0 14px var(--neon);
+    min-width: 68px;
+    letter-spacing: 1px;
+  }
+
+  .progress-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(0, 255, 170, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--neon), var(--cyan));
+    box-shadow: 0 0 12px var(--neon);
+    border-radius: 3px;
+    transition: width 0.3s;
+    position: relative;
+  }
+
+  .progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: 20px;
+    background: linear-gradient(90deg, transparent, #fff);
+    opacity: 0.5;
+  }
+
+  .info-text {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  .result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    font-size: 12px;
+    border-bottom: 1px dashed var(--border);
+    letter-spacing: 0.5px;
+  }
+
+  .result-row:last-child { border-bottom: none; }
+
+  .result-label {
+    color: var(--text-dim);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 1px;
+  }
+
+  .result-value {
+    font-weight: 900;
+    color: var(--neon);
+    font-size: 15px;
+    text-shadow: 0 0 10px var(--neon);
+    letter-spacing: 1px;
+  }
+
+  .result-value.danger {
+    color: var(--danger);
+    text-shadow: 0 0 10px var(--danger);
+  }
+
+  .result-value.warn {
+    color: var(--warn);
+    text-shadow: 0 0 10px var(--warn);
+  }
+
+  .buttons-row {
+    display: flex;
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 12px 18px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    cursor: pointer;
+    font-family: inherit;
+    text-transform: uppercase;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .btn:hover {
+    border-color: var(--neon);
+    color: var(--neon);
+    box-shadow: 0 0 14px rgba(0, 255, 170, 0.3);
+  }
+
+  .btn.primary {
+    background: var(--neon);
+    color: #000;
+    border-color: var(--neon);
+    box-shadow: 0 0 20px rgba(0, 255, 170, 0.4);
+  }
+
+  .btn.primary:hover {
+    box-shadow: 0 0 32px var(--neon);
+    background: #00ffcc;
+  }
+
+  /* ─── PROTECTION ─── */
+  .protection-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 12px;
+  }
+
+  .module-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 18px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    transition: all 0.2s;
+  }
+
+  .module-card:hover {
+    border-color: var(--neon);
+    box-shadow: 0 0 16px rgba(0, 255, 170, 0.15);
+  }
+
+  .module-info {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex: 1;
+  }
+
+  .module-icon {
+    font-size: 20px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 255, 170, 0.08);
+    border: 1px solid rgba(0, 255, 170, 0.2);
+    border-radius: 4px;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 6px rgba(0, 255, 170, 0.4));
+  }
+
+  .module-name {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .module-desc {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── TOGGLE ─── */
+  .toggle { position: relative; width: 44px; height: 24px; flex-shrink: 0; cursor: pointer; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--text-mute);
+    border-radius: 12px;
+    transition: all 0.25s;
+  }
+
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 3px;
+    top: 3px;
+    background: var(--text-mute);
+    border-radius: 50%;
+    transition: all 0.25s;
+  }
+
+  .toggle input:checked + .toggle-slider {
+    background: rgba(0, 255, 170, 0.15);
+    border-color: var(--neon);
+    box-shadow: 0 0 14px rgba(0, 255, 170, 0.4), inset 0 0 10px rgba(0, 255, 170, 0.2);
+  }
+
+  .toggle input:checked + .toggle-slider::before {
+    transform: translateX(20px);
+    background: var(--neon);
+    box-shadow: 0 0 12px var(--neon);
+  }
+
+  /* ─── RESULTS ─── */
+  .tab-row {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .tab {
+    padding: 11px 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    border-bottom: 2px solid transparent;
+    font-family: inherit;
+    margin-bottom: -1px;
+    transition: all 0.15s;
+    text-transform: uppercase;
+  }
+
+  .tab:hover { color: var(--text); }
+
+  .tab.active {
+    color: var(--neon);
+    border-bottom-color: var(--neon);
+    text-shadow: 0 0 10px var(--neon);
+  }
+
+  .results-table-wrap {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  th {
+    text-align: left;
+    padding: 12px 14px;
+    font-size: 9px;
+    color: var(--neon);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    font-weight: 700;
+    background: rgba(0, 255, 170, 0.03);
+  }
+
+  td {
+    padding: 12px 14px;
+    font-size: 11px;
+    color: var(--text);
+    border-bottom: 1px dashed rgba(0, 255, 170, 0.08);
+    letter-spacing: 0.5px;
+  }
+
+  tr:hover td {
+    background: rgba(0, 255, 170, 0.04);
+  }
+
+  .path-cell {
+    color: var(--cyan) !important;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: 10.5px;
+  }
+
+  .path-cell:hover { color: var(--neon) !important; text-shadow: 0 0 8px var(--neon); }
+
+  .row-check {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border: 1.5px solid var(--text-mute);
+    border-radius: 2px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    margin: 0;
+    transition: all 0.15s;
+  }
+
+  .row-check:checked {
+    border-color: var(--neon);
+    background: rgba(0, 255, 170, 0.2);
+    box-shadow: 0 0 8px rgba(0, 255, 170, 0.5);
+  }
+
+  .row-check:checked::after {
+    content: '✓';
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 10px;
+    color: var(--neon);
+    font-weight: bold;
+  }
+
+  .empty-row {
+    padding: 50px 20px !important;
+    text-align: center !important;
+    color: var(--text-mute) !important;
+    font-size: 11px !important;
+    letter-spacing: 2px;
+  }
+
+  .results-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .action-btn {
+    padding: 11px 20px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    font-family: inherit;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+
+  .action-btn:hover {
+    border-color: var(--neon);
+    color: var(--neon);
+    box-shadow: 0 0 14px rgba(0, 255, 170, 0.3);
+  }
+
+  .action-btn.primary {
+    background: var(--neon);
+    color: #000;
+    border-color: var(--neon);
+    box-shadow: 0 0 20px rgba(0, 255, 170, 0.4);
+  }
+
+  .action-btn.primary:hover {
+    box-shadow: 0 0 32px var(--neon);
+    background: #00ffcc;
+  }
+
+  /* ─── SETTINGS ─── */
+  .settings-layout { display: flex; gap: 24px; }
+
+  .settings-nav {
+    width: 180px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .settings-nav-item {
+    padding: 10px 14px;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    border-radius: 4px;
+    cursor: pointer;
+    background: transparent;
+    border: 1px solid transparent;
+    text-align: left;
+    font-family: inherit;
+    transition: all 0.15s;
+    text-transform: uppercase;
+    font-weight: 700;
+  }
+
+  .settings-nav-item:hover {
+    color: var(--text);
+    border-color: var(--border);
+  }
+
+  .settings-nav-item.active {
+    color: var(--neon);
+    background: rgba(0, 255, 170, 0.08);
+    border-color: var(--neon);
+    text-shadow: 0 0 8px var(--neon);
+  }
+
+  .settings-content { flex: 1; min-width: 0; }
+  .settings-pane { display: none; }
+  .settings-pane.active { display: block; }
+
+  .setting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 0;
+    border-bottom: 1px dashed var(--border);
+    gap: 20px;
+  }
+
+  .setting-row:last-child { border-bottom: none; }
+
+  .setting-name {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    color: var(--text);
+    text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  .setting-desc {
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.5px;
+  }
+
+  /* ─── ABOUT ─── */
+  .about-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+    text-align: center;
+  }
+
+  .about-logo {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .about-logo svg {
+    width: 76px;
+    height: 76px;
+    filter: drop-shadow(0 0 24px var(--neon));
+  }
+
+  .about-wordmark-main {
+    font-size: 30px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--neon);
+    text-shadow: 0 0 24px var(--neon);
+    text-transform: uppercase;
+  }
+
+  .about-wordmark-main .dim { color: var(--text); text-shadow: none; }
+
+  .about-wordmark-tag {
+    font-size: 9px;
+    letter-spacing: 5px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    font-weight: 700;
+  }
+
+  .about-tagline {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+    max-width: 400px;
+    letter-spacing: 1px;
+  }
+
+  .about-version {
+    font-size: 10px;
+    color: var(--text-mute);
+    letter-spacing: 2px;
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  /* ─── TOAST ─── */
+  .toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-120px);
+    background: rgba(10, 10, 15, 0.95);
+    border: 1px solid var(--neon);
+    color: var(--neon);
+    padding: 14px 24px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    box-shadow: 0 0 32px rgba(0, 255, 170, 0.5), inset 0 0 20px rgba(0, 255, 170, 0.1);
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 9999;
+    pointer-events: none;
+    text-shadow: 0 0 8px var(--neon);
+  }
+
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  .toast::before { content: '// '; color: var(--text-mute); }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="logo-wrap" onclick="nav('settings'); setSettingPane('about')">
+      <div class="logo-row">
+        <svg class="logo-mark" viewBox="0 0 100 100">
+          <defs>
+            <linearGradient id="greenG" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#00ffaa"/>
+              <stop offset="100%" stop-color="#00cc88"/>
+            </linearGradient>
+          </defs>
+          <path d="M 22 42 Q 30 14 62 20" stroke="url(#greenG)" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M 78 58 Q 70 86 38 80" stroke="url(#greenG)" stroke-width="5" fill="none" stroke-linecap="round"/>
+          <path d="M 20 50 Q 50 22 80 50" stroke="#00ffaa" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.9"/>
+          <path d="M 20 50 Q 50 78 80 50" stroke="#00ffaa" stroke-width="6" fill="none" stroke-linecap="round" opacity="0.9"/>
+          <circle cx="50" cy="50" r="12" fill="#00ffaa"/>
+          <circle cx="50" cy="50" r="6" fill="#0a0a0f"/>
+        </svg>
+        <div class="logo-text">
+          <div class="logo-main">DEVA<span class="dim">DARA</span></div>
+          <div class="logo-tag">// ANTIVIRUS v1.0</div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-section">// Main</div>
+      <button class="nav-item active" data-page="dashboard"><span class="nav-icon">▣</span>Dashboard</button>
+      <button class="nav-item" data-page="scan"><span class="nav-icon">⌖</span>Scan</button>
+      <button class="nav-item" data-page="protection"><span class="nav-icon">◈</span>Protection</button>
+      <button class="nav-item" data-page="results"><span class="nav-icon">▤</span>Results</button>
+      <button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span>Settings</button>
+    </nav>
+
+    <div class="status-box">
+      <div class="status-label">// Real-Time</div>
+      <div class="status-value">
+        <span class="status-dot"></span>
+        ACTIVE
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <section class="page active" id="page-dashboard">
+      <div class="page-header">
+        <h1 class="page-title">Dashboard</h1>
+        <p class="page-sub">// system_status: secured — welcome back, operator</p>
+      </div>
+
+      <div class="hero">
+        <div class="hero-shield">🛡️</div>
+        <div>
+          <div class="hero-greeting">// Security Status</div>
+          <div class="hero-status">SYSTEM SECURED</div>
+          <div class="hero-desc">Real-time protection <span class="accent">[ACTIVE]</span> · Last scan: 2h ago</div>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">// Files Scanned</div>
+          <div class="stat-value">12,847</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">// Threats Detected</div>
+          <div class="stat-value" style="color: var(--neon);">0</div>
+        </div>
+        <div class="stat-card warn">
+          <div class="stat-label">// Suspicious Items</div>
+          <div class="stat-value">5</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">// Last Full Scan</div>
+          <div class="stat-value" style="font-size: 16px;">14:32</div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-title">Quick Actions <span>[5]</span></div>
+        <div class="actions-grid">
+          <div class="action-card" onclick="nav('scan')">
+            <div class="action-icon">⌖</div>
+            <div>
+              <div class="action-title">Quick Scan</div>
+              <div class="action-desc">// scan common locations</div>
+            </div>
+          </div>
+          <div class="action-card" onclick="nav('scan')">
+            <div class="action-icon">◈</div>
+            <div>
+              <div class="action-title">Full Scan</div>
+              <div class="action-desc">// deep system scan</div>
+            </div>
+          </div>
+          <div class="action-card" onclick="nav('protection')">
+            <div class="action-icon">⚙</div>
+            <div>
+              <div class="action-title">Protection</div>
+              <div class="action-desc">// manage modules</div>
+            </div>
+          </div>
+          <div class="action-card" onclick="nav('results')">
+            <div class="action-icon">▤</div>
+            <div>
+              <div class="action-title">Results</div>
+              <div class="action-desc">// review findings</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCAN -->
+    <section class="page" id="page-scan">
+      <div class="page-header">
+        <h1 class="page-title">Scan</h1>
+        <p class="page-sub">// select scan mode or configure targets</p>
+      </div>
+
+      <div class="panel" id="scan-selection">
+        <div class="panel-title">Scan Configuration <span>[READY]</span></div>
+
+        <p style="font-size: 11px; color: var(--text-dim); margin-bottom: 16px; letter-spacing: 1px;">// pick a mode, or check/uncheck items yourself for a custom scan</p>
+
+        <div class="radio-row">
+          <label class="radio-item active"><input type="radio" name="mode" checked onchange="updateRadios()"><span>Quick Scan</span></label>
+          <label class="radio-item"><input type="radio" name="mode" onchange="updateRadios()"><span>Full Scan</span></label>
+          <label class="radio-item"><input type="radio" name="mode" onchange="updateRadios()"><span>Scan Downloads</span></label>
+          <label class="radio-item"><input type="radio" name="mode" onchange="updateRadios()"><span>Scan USB</span></label>
+        </div>
+
+        <div class="scan-content">
+          <div class="tree-container">
+            <div class="tree-item"><span class="tree-arrow">▼</span><input type="checkbox" checked><span class="tree-icon">💾</span><span>Computer Drive</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox" checked><span>Local Disk (C:)</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox"><span>New Volume (D:)</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox"><span>New Volume G (E:)</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox"><span>New Volume (F:)</span></div>
+            <div class="tree-item"><span class="tree-arrow">▼</span><input type="checkbox" checked><span class="tree-icon">⚙️</span><span>System Area</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox" checked><span>Memory Processes</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox" checked><span>Services</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox" checked><span>Registry Area</span></div>
+            <div class="tree-item tree-indent"><input type="checkbox" checked><span>Start-Up Area</span></div>
+          </div>
+          <button class="scan-btn" onclick="startScan()">Start</button>
+        </div>
+      </div>
+
+      <div class="scan-scanning" id="scan-scanning">
+        <h2 class="scanning-title">// Scanning your PC</h2>
+
+        <div class="panel">
+          <div class="panel-title">Current Target <span id="scan-status">[RUNNING]</span></div>
+          <div class="path-text" id="scan-path">initializing...</div>
+          <div class="progress-bar-row">
+            <div class="progress-percent" id="scan-percent">0%</div>
+            <div class="progress-bar"><div class="progress-fill" id="scan-fill"></div></div>
+          </div>
+          <div class="info-text" id="scan-info">> initializing scan engine...</div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-title">Scan Results <span>[LIVE]</span></div>
+          <div class="result-row"><span class="result-label">Files checked</span><span class="result-value" id="res-files">0</span></div>
+          <div class="result-row"><span class="result-label">Threats detected</span><span class="result-value danger" id="res-threats">0</span></div>
+          <div class="result-row"><span class="result-label">Suspicious items</span><span class="result-value warn" id="res-suspicious">0</span></div>
+          <div class="result-row"><span class="result-label">Hidden files</span><span class="result-value" id="res-hidden">0</span></div>
+        </div>
+
+        <div class="buttons-row">
+          <button class="btn primary" id="fix-all-btn" onclick="nav('results')" style="display:none;">Fix All</button>
+          <button class="btn" onclick="showToast('scan log opened')">Log</button>
+          <button class="btn" onclick="showToast('minimizing')">Mini-Form</button>
+          <button class="btn" onclick="stopScan()">Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROTECTION -->
+    <section class="page" id="page-protection">
+      <div class="page-header">
+        <h1 class="page-title">Protection</h1>
+        <p class="page-sub">// security modules — status and control</p>
+      </div>
+
+      <div class="protection-grid">
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">◈</div>
+            <div>
+              <div class="module-name">Real-Time Protection</div>
+              <div class="module-desc">// monitor files and processes</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">◉</div>
+            <div>
+              <div class="module-name">Web Shield</div>
+              <div class="module-desc">// block malicious websites</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">✉</div>
+            <div>
+              <div class="module-name">Email Protection</div>
+              <div class="module-desc">// scan attachments</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">▲</div>
+            <div>
+              <div class="module-name">Firewall</div>
+              <div class="module-desc">// network traffic control</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">⬢</div>
+            <div>
+              <div class="module-name">USB Protection</div>
+              <div class="module-desc">// auto-scan removable drives</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="module-card">
+          <div class="module-info">
+            <div class="module-icon">◐</div>
+            <div>
+              <div class="module-name">Behavior Monitoring</div>
+              <div class="module-desc">// watch suspicious activity</div>
+            </div>
+          </div>
+          <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+        </div>
+      </div>
+    </section>
+
+    <!-- RESULTS -->
+    <section class="page" id="page-results">
+      <div class="page-header">
+        <h1 class="page-title">Results</h1>
+        <p class="page-sub">// findings from last scan — click path to locate</p>
+      </div>
+
+      <div class="tab-row">
+        <button class="tab active" data-rtab="virus">[ Virus ]</button>
+        <button class="tab" data-rtab="registry">[ Registry ]</button>
+        <button class="tab" data-rtab="hidden">[ Hidden ]</button>
+        <button class="tab" data-rtab="quarantine">[ Quarantine ]</button>
+      </div>
+      <div id="results-body"></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="page" id="page-settings">
+      <div class="page-header">
+        <h1 class="page-title">Settings</h1>
+        <p class="page-sub">// configure system preferences</p>
+      </div>
+
+      <div class="settings-layout">
+        <div class="settings-nav">
+          <button class="settings-nav-item active" data-pane="general">General</button>
+          <button class="settings-nav-item" data-pane="protection">Protection</button>
+          <button class="settings-nav-item" data-pane="exceptions">Exceptions</button>
+          <button class="settings-nav-item" data-pane="notifications">Notifications</button>
+          <button class="settings-nav-item" data-pane="about">About</button>
+        </div>
+
+        <div class="settings-content">
+          <div class="settings-pane active" data-pane="general">
+            <div class="panel">
+              <div class="panel-title">General <span>[5]</span></div>
+              <div class="setting-row">
+                <div><div class="setting-name">Launch at startup</div><div class="setting-desc">// start devadara when windows boots</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-name">Minimize to tray</div><div class="setting-desc">// keep running in system tray</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-name">Auto-update definitions</div><div class="setting-desc">// keep virus database current</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="protection">
+            <div class="panel">
+              <div class="panel-title">Protection Settings <span>[3]</span></div>
+              <div class="setting-row">
+                <div><div class="setting-name">Scan memory on startup</div><div class="setting-desc">// check running processes at launch</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-name">Deep inspection</div><div class="setting-desc">// analyze files with heuristics</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="exceptions">
+            <div class="panel">
+              <div class="panel-title">Scan Exceptions <span>[2]</span></div>
+              <div class="setting-row">
+                <div><div class="setting-name">C:\Users\user\Projects</div><div class="setting-desc">// excluded from all scans</div></div>
+                <button class="action-btn" onclick="showToast('removed')">Remove</button>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-name">*.log</div><div class="setting-desc">// file type excluded</div></div>
+                <button class="action-btn" onclick="showToast('removed')">Remove</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="notifications">
+            <div class="panel">
+              <div class="panel-title">Notifications <span>[2]</span></div>
+              <div class="setting-row">
+                <div><div class="setting-name">Threat alerts</div><div class="setting-desc">// show popup when threat detected</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+              <div class="setting-row">
+                <div><div class="setting-name">Scan completion</div><div class="setting-desc">// notify when scan finishes</div></div>
+                <label class="toggle"><input type="checkbox" checked><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-pane" data-pane="about">
+            <div class="panel">
+              <div class="about-container">
+                <div class="about-logo">
+                  <svg viewBox="0 0 100 100">
+                    <defs>
+                      <linearGradient id="greenG2" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#00ffaa"/>
+                        <stop offset="100%" stop-color="#00cc88"/>
+                      </linearGradient>
+                    </defs>
+                    <path d="M 22 42 Q 30 14 62 20" stroke="url(#greenG2)" stroke-width="5" fill="none" stroke-linecap="round"/>
+                    <circle cx="70" cy="22" r="5" fill="url(#greenG2)"/>
+                    <path d="M 78 58 Q 70 86 38 80" stroke="url(#greenG2)" stroke-width="5" fill="none" stroke-linecap="round"/>
+                    <circle cx="30" cy="78" r="5" fill="url(#greenG2)"/>
+                    <path d="M 20 50 Q 50 22 80 50" stroke="#00ffaa" stroke-width="6" fill="none" stroke-linecap="round"/>
+                    <path d="M 20 50 Q 50 78 80 50" stroke="#00ffaa" stroke-width="6" fill="none" stroke-linecap="round"/>
+                    <circle cx="50" cy="50" r="14" fill="#00ffaa"/>
+                    <circle cx="50" cy="50" r="11" fill="none" stroke="#00ffaa" stroke-width="2"/>
+                    <circle cx="50" cy="50" r="7" fill="#0a0a0f"/>
+                  </svg>
+                  <div style="text-align: left;">
+                    <div class="about-wordmark-main">DEVA<span class="dim">DARA</span></div>
+                    <div class="about-wordmark-tag">// ANTIVIRUS GUARD</div>
+                  </div>
+                </div>
+                <p class="about-tagline">"protecting your digital world, one scan at a time"</p>
+                <div class="about-version">v1.0.0 · © 2026 DEVADARA</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── NAV ──
+function nav(page) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + page).classList.add('active');
+  const btn = document.querySelector(`.nav-item[data-page="${page}"]`);
+  if (btn) btn.classList.add('active');
+  if (page !== 'scan') stopScanSilent();
+}
+document.querySelectorAll('.nav-item').forEach(b => { b.onclick = () => nav(b.dataset.page); });
+
+// ── RADIO ──
+function updateRadios() {
+  document.querySelectorAll('.radio-item').forEach(i => {
+    i.classList.toggle('active', i.querySelector('input').checked);
+  });
+}
+
+// ── TOAST ──
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg.toUpperCase();
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+// ── SCAN ──
+const paths = [
+  'C:\\Windows\\System32\\kernel32.dll',
+  'C:\\Users\\user\\Documents\\report.docx',
+  'C:\\Program Files\\Common Files\\system\\ole32.dll',
+  'C:\\Windows\\SysWOW64\\advapi32.dll',
+  'C:\\Users\\user\\Downloads\\installer.msi',
+  'C:\\Program Files\\Microsoft\\Edge\\msedge.exe',
+  'C:\\Windows\\Fonts\\segoeui.ttf',
+  'C:\\Users\\user\\AppData\\Local\\Temp\\cache.dat',
+  'C:\\Windows\\System32\\drivers\\etc\\hosts',
+  'HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run'
+];
+let scanTimer = null;
+let state = { pct:0, files:0, threats:0, susp:0, hidden:0, idx:0, running:false };
+
+function startScan() {
+  document.getElementById('scan-selection').style.display = 'none';
+  document.getElementById('scan-scanning').classList.add('active');
+  document.getElementById('fix-all-btn').style.display = 'none';
+  state = { pct:0, files:0, threats:0, susp:0, hidden:0, idx:0, running:true };
+  scanTimer = setInterval(tickScan, 180);
+}
+
+function tickScan() {
+  if (!state.running) return;
+  state.pct = Math.min(100, state.pct + Math.random()*5 + 1);
+  state.files += Math.floor(Math.random()*35) + 15;
+  state.idx = (state.idx + 1) % paths.length;
+  if (Math.random() < 0.08) state.susp++;
+  if (Math.random() < 0.10) state.hidden++;
+  if (Math.random() < 0.015) state.threats++;
+
+  document.getElementById('scan-path').textContent = paths[state.idx];
+  document.getElementById('scan-percent').textContent = Math.floor(state.pct) + '%';
+  document.getElementById('scan-fill').style.width = state.pct + '%';
+
+  const info = document.getElementById('scan-info');
+  if (state.pct < 30) info.textContent = '> step 1/4: computer drive — scanning files and folders...';
+  else if (state.pct < 60) info.textContent = '> step 2/4: system area — checking entries...';
+  else if (state.pct < 85) info.textContent = '> step 3/4: deep inspection — analyzing heuristics...';
+  else if (state.pct < 100) info.textContent = '> step 4/4: start-up area — verifying entries...';
+  else info.textContent = '> scan complete.';
+
+  document.getElementById('res-files').textContent = state.files.toLocaleString();
+  document.getElementById('res-threats').textContent = state.threats;
+  document.getElementById('res-suspicious').textContent = state.susp;
+  document.getElementById('res-hidden').textContent = state.hidden;
+
+  if (state.pct >= 100) {
+    state.running = false;
+    clearInterval(scanTimer);
+    document.getElementById('scan-percent').textContent = '100%';
+    document.getElementById('scan-fill').style.width = '100%';
+    document.getElementById('scan-status').textContent = '[COMPLETE]';
+    const total = state.threats + state.susp + state.hidden;
+    if (total > 0) {
+      const btn = document.getElementById('fix-all-btn');
+      btn.style.display = 'block';
+      btn.textContent = `Fix All (${total})`;
+    }
+  }
+}
+
+function stopScan() {
+  state.running = false;
+  if (scanTimer) clearInterval(scanTimer);
+  showToast('scan terminated');
+  setTimeout(() => {
+    document.getElementById('scan-scanning').classList.remove('active');
+    document.getElementById('scan-selection').style.display = 'block';
+    document.getElementById('scan-status').textContent = '[READY]';
+  }, 400);
+}
+
+function stopScanSilent() {
+  state.running = false;
+  if (scanTimer) clearInterval(scanTimer);
+  document.getElementById('scan-scanning').classList.remove('active');
+  document.getElementById('scan-selection').style.display = 'block';
+}
+
+// ── RESULTS ──
+let rtab = 'virus';
+const data = {
+  virus: {
+    cols: ['', 'Virus Name', 'Type', 'File Path', 'Status'],
+    rows: [
+      [true, 'Trojan.Generic.Heuristic', 'Trojan', 'C:\\Users\\user\\Downloads\\setup_v2.exe', 'Detected'],
+      [true, 'Backdoor.Win32.Test', 'Backdoor', 'C:\\Users\\user\\Temp\\svc_updater.dll', 'Detected'],
+      [false, 'PUA.BundledInstaller', 'PUA', 'D:\\Games\\bundle_helper.exe', 'Detected']
+    ],
+    actions: [{label:'Quarantine All', primary:true}, {label:'Quarantine Checked'}, {label:'Ignore'}]
+  },
+  registry: {
+    cols: ['', 'Value Name', 'Key Path', 'Type', 'Status'],
+    rows: [
+      [true, 'Updater', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', 'REG_SZ', 'Suspicious'],
+      [false, 'SysHelper', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce', 'REG_SZ', 'Suspicious']
+    ],
+    actions: [{label:'Repair All', primary:true}, {label:'Repair Checked'}]
+  },
+  hidden: {
+    cols: ['', 'Name', 'Attributes', 'Type', 'Path'],
+    rows: [
+      [false, 'autorun.inf', 'Hidden, System', 'INF', 'E:\\autorun.inf'],
+      [false, 'cache.dat', 'Hidden', 'DAT', 'C:\\Users\\user\\AppData\\Local\\cache.dat']
+    ],
+    actions: [{label:'Unhide All', primary:true}, {label:'Unhide Checked'}]
+  },
+  quarantine: {
+    cols: ['', 'Original Name', 'Threat Type', 'Quarantined', 'Status'],
+    rows: [],
+    actions: [{label:'Delete All', primary:true}, {label:'Restore Checked'}]
+  }
+};
+
+function renderResults() {
+  const d = data[rtab];
+  const header = d.cols.map(c => `<th>${c}</th>`).join('');
+  const body = d.rows.length === 0
+    ? `<tr><td colspan="${d.cols.length}" class="empty-row">// no items found</td></tr>`
+    : d.rows.map((r, i) => {
+        const cells = r.slice(1).map((cell, ci) => {
+          const colName = d.cols[ci+1].toLowerCase();
+          if (colName.includes('path') || colName === 'path') {
+            return `<td class="path-cell" onclick="showToast('opening: ${cell.substring(0,30)}...')">${cell}</td>`;
+          }
+          return `<td>${cell}</td>`;
+        }).join('');
+        return `<tr><td><input type="checkbox" class="row-check" ${r[0]?'checked':''}></td>${cells}</tr>`;
+      }).join('');
+  const actions = d.actions.map(a => `<button class="action-btn ${a.primary?'primary':''}" onclick="showToast('${a.label}')">${a.label}</button>`).join('');
+
+  document.getElementById('results-body').innerHTML = `
+    <div class="results-table-wrap">
+      <table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>
+    </div>
+    <div class="results-actions">${actions}</div>
+  `;
+}
+
+document.querySelectorAll('[data-rtab]').forEach(btn => {
+  btn.onclick = () => {
+    rtab = btn.dataset.rtab;
+    document.querySelectorAll('[data-rtab]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderResults();
+  };
+});
+
+// ── SETTINGS ──
+function setSettingPane(pane) {
+  document.querySelectorAll('.settings-nav-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.settings-pane').forEach(p => p.classList.remove('active'));
+  const nav = document.querySelector(`.settings-nav-item[data-pane="${pane}"]`);
+  const p = document.querySelector(`.settings-pane[data-pane="${pane}"]`);
+  if (nav) nav.classList.add('active');
+  if (p) p.classList.add('active');
+}
+document.querySelectorAll('.settings-nav-item').forEach(item => {
+  item.onclick = () => setSettingPane(item.dataset.pane);
+});
+
+renderResults();
+</script>
+</body>
+</html>

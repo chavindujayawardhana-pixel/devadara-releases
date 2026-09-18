@@ -28,7 +28,7 @@ class Toast(QWidget):
         # dashboard.py's QuickActionCard, which already carries this same
         # flag for the same reason).
         self.setAttribute(Qt.WA_StyledBackground, True)
-        theme.apply_glow(self, theme.ACCENT_GREEN, blur=22, alpha=100)
+        theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=22, alpha=100)
         # ToastHost (this widget's parent) is WA_TransparentForMouseEvents so
         # the rest of the app stays clickable - but that attribute is
         # inherited by children too, so each actual toast bubble must opt
@@ -41,12 +41,12 @@ class Toast(QWidget):
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(10)
 
-        layout.addWidget(icon_label("dot", size=10, color=theme.ACCENT_GREEN))
+        layout.addWidget(icon_label("dot", size=10, color=theme.CYBER_NEON))
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
         title_label = body_text(title)
-        title_label.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        title_label.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         title_label.setWordWrap(True)
         text_col.addWidget(title_label)
         msg_label = body_secondary(message, wrap=True)

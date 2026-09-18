@@ -24,7 +24,7 @@ class ConfirmationDialog(QDialog):
         self.setFixedWidth(440)
         self.setStyleSheet(
             f"QDialog {{ background-color: {theme.GRADIENT_RAISED}; "
-            f"border: 1px solid {theme.BORDER_STRONG}; border-radius: {theme.RADIUS_CARD}px; }}"
+            f"border: 1px solid {theme.CYBER_BORDER_STRONG}; border-radius: {theme.RADIUS_CARD}px; }}"
         )
 
         layout = QVBoxLayout(self)
@@ -49,7 +49,7 @@ class ConfirmationDialog(QDialog):
         self.confirm_button.setCursor(Qt.PointingHandCursor)
         self.confirm_button.clicked.connect(self.accept)
         if not destructive:
-            theme.apply_glow(self.confirm_button, theme.ACCENT_GREEN, blur=18, alpha=130)
+            theme.apply_glow(self.confirm_button, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
         button_row.addWidget(self.confirm_button)
 
         layout.addLayout(button_row)

@@ -119,7 +119,7 @@ class Card(QFrame):
         # the hero card's own rgba(40,200,120,0.15) at 30px) rather than
         # falling back to the generic accent.
         if glow:
-            theme.apply_glow(self, glow_color or theme.HERO_GLOW, blur=glow_blur)
+            theme.apply_glow(self, glow_color or theme.CYBER_GLOW_SOFT, blur=glow_blur)
 
     def addWidget(self, widget):
         self.layout_.addWidget(widget)
@@ -162,15 +162,15 @@ class StatusDot(QLabel):
         # visual language; a quiet/off dot stays a flat muted sage - no
         # gradient needed for something that isn't meant to catch the eye.
         fill = {
-            STATUS_ACTIVE: theme.GRADIENT_STATUS_DOT_ACTIVE,
-            STATUS_ATTENTION: theme.GRADIENT_STATUS_DOT_ATTENTION,
-        }.get(state, theme.TEXT_SECONDARY)
+            STATUS_ACTIVE: theme.CYBER_NEON,
+            STATUS_ATTENTION: theme.CYBER_WARN,
+        }.get(state, theme.CYBER_TEXT_SECONDARY)
         self.setFixedSize(size, size)
         self.setStyleSheet(
             f"background: {fill}; border-radius: {size // 2}px;"
         )
         if self._glow and state in (STATUS_ACTIVE, STATUS_ATTENTION):
-            glow_color = theme.KELLY_GREEN if state == STATUS_ACTIVE else theme.TEXT_PRIMARY
+            glow_color = theme.CYBER_NEON if state == STATUS_ACTIVE else theme.CYBER_WARN
             theme.apply_glow(self, glow_color, blur=max(12, size * 2), alpha=170)
         elif self._glow:
             theme.clear_glow(self)
@@ -213,7 +213,7 @@ def status_row(label_text, state, value_text, compact=False):
     label = body_text(label_text)
     font_size = 11 if compact else 12
     font_weight = 400 if compact else 500
-    label.setStyleSheet(f"font-size: {font_size}px; font-weight: {font_weight}; color: {theme.ROW_LABEL_COLOR};")
+    label.setStyleSheet(f"font-size: {font_size}px; font-weight: {font_weight}; color: {theme.CYBER_TEXT_PRIMARY};")
     layout.addWidget(label)
     layout.addStretch()
 
@@ -222,7 +222,7 @@ def status_row(label_text, state, value_text, compact=False):
     layout.addWidget(dot)
 
     # Exact reference value: "Active" status text is #7CFFB2 at 11px.
-    value_color = theme.ROW_ACTIVE_VALUE_COLOR if active else theme.TEXT_SECONDARY
+    value_color = theme.CYBER_NEON if active else theme.CYBER_TEXT_SECONDARY
     value = make_label(value_text, "metadataText")
     value_font_size = 10 if compact else 11
     value.setStyleSheet(f"font-size: {value_font_size}px; font-weight: 600; color: {value_color};")
@@ -247,11 +247,11 @@ def stat_block(items):
         # spacing 0.5px; stat value 12px / #F2FFF7.
         label = metadata_text(label_text)
         label.setStyleSheet(
-            f"font-size: 10px; font-weight: 500; color: {theme.STAT_LABEL_COLOR}; letter-spacing: 0.5px;"
+            f"font-size: 10px; font-weight: 500; color: {theme.CYBER_TEXT_MUTE}; letter-spacing: 0.5px;"
         )
         col.addWidget(label)
         value_label = body_text(value_text)
-        value_label.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {theme.STAT_VALUE_COLOR};")
+        value_label.setStyleSheet(f"font-size: 12px; font-weight: 500; color: {theme.CYBER_TEXT_PRIMARY};")
         col.addWidget(value_label)
         wrap = QWidget()
         wrap.setObjectName("statBlockItem")
@@ -376,7 +376,7 @@ class EmptyState(QWidget):
 
         title_label = body_text(title)
         title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        title_label.setStyleSheet(f"font-size: 15px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         inner.addWidget(title_label)
 
         body_label = body_secondary(body, wrap=True)
@@ -390,7 +390,7 @@ class EmptyState(QWidget):
             button.setObjectName("primaryButton")
             button.setCursor(Qt.PointingHandCursor)
             button.clicked.connect(self.action_triggered.emit)
-            theme.apply_glow(button, theme.ACCENT_GREEN, blur=20, alpha=130)
+            theme.apply_glow(button, theme.CYBER_GLOW_NEON, blur=20, alpha=130)
             inner.addWidget(button, alignment=Qt.AlignHCenter)
 
         centered = QHBoxLayout()
@@ -425,7 +425,7 @@ class ThreatCard(Card):
         self.addLayout(eyebrow)
 
         name_label = body_text(file_name)
-        name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+        name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
         self.addWidget(name_label)
 
         path_label = metadata_text(_elide_left(file_path, 70))
@@ -441,7 +441,7 @@ class ThreatCard(Card):
         quarantine_btn.setObjectName("primaryButton")
         quarantine_btn.setCursor(Qt.PointingHandCursor)
         quarantine_btn.clicked.connect(self.quarantine_clicked.emit)
-        theme.apply_glow(quarantine_btn, theme.ACCENT_GREEN, blur=18, alpha=130)
+        theme.apply_glow(quarantine_btn, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
         actions.addWidget(quarantine_btn)
 
         delete_btn = QPushButton("Delete")

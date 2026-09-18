@@ -167,7 +167,7 @@ class ThreatsPage(theme.PageCanvas):
         quarantine_btn.setObjectName("primaryButton")
         quarantine_btn.setCursor(Qt.PointingHandCursor)
         quarantine_btn.clicked.connect(lambda: (self._quarantine(finding), self.detail_panel.hide()))
-        theme.apply_glow(quarantine_btn, theme.ACCENT_GREEN, blur=18, alpha=130)
+        theme.apply_glow(quarantine_btn, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
         actions.addWidget(quarantine_btn)
         delete_btn = QPushButton("Delete")
         delete_btn.setObjectName("secondaryButton")
@@ -207,7 +207,7 @@ class ThreatsPage(theme.PageCanvas):
             folder = "\\".join(original_path.split("\\")[:-1]) if "\\" in original_path else "-"
 
             name_label = body_secondary(name)
-            name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.TEXT_PRIMARY};")
+            name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
             card.addWidget(name_label)
             card.addWidget(body_secondary(f"Original location: {folder}"))
             card.addWidget(body_secondary(f"Date: {format_timestamp(entry.get('quarantined_at', ''))}"))

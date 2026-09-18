@@ -1,0 +1,2152 @@
+﻿
+
+========== FILE: devadara_gui/pages/dashboard.py ==========
+
+"""
+dashboard.py
+
+The landing screen (Section 3). Answers "Is my PC protected?" immediately
+via the hero card, then offers the four quick-scan actions, a read-only
+mirror of protection module state, and a real recent-activity feed backed
+by devadara_gui.services.activity_log.
+"""
+
+from datetime import datetime
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from devadara_gui import theme
+from devadara_gui.components import (
+    Card,
+    EmptyState,
+    StatusDot,
+    body_secondary,
+    body_text,
+    format_timestamp,
+    hairline,
+    make_label,
+    page_title,
+    stat_block,
+    status_row,
+)
+from devadara_gui.icons import icon_label, icon_style
+from devadara_gui.services import activity_log
+
+# Kinds that are always worth surfacing on the Dashboard even amid a run of
+# routine scans - anything NOT in this "routine" set is always shown.
+# scan_log.py/activity_log.py themselves are untouched by this - it only
+# changes what the Dashboard's own Recent Activity list chooses to surface.
+_ROUTINE_ACTIVITY_KINDS = {"scan_completed"}
+_ROUTINE_DEDUP_WINDOW_SECONDS = 10 * 60
+
+
+def _filter_meaningful_events(events):
+    """
+    events: activity_log entries, newest first (as recent_events() returns).
+    Collapses back-to-back routine "scan completed, nothing found" entries
+    within a short window down to just the newest one, so five near-
+    identical "Quick Scan completed" rows don't crowd out anything else
+    that happened. A routine scan that DID find something (its own detail
+    text says so - see AppState.finalize_scan()'s summary) is never
+    collapsed - only genuinely uneventful completions are.
+    """
+    filtered = []
+    last_routine_at = None
+    for event in events:
+        is_routine = (
+            event.get("kind") in _ROUTINE_ACTIVITY_KINDS
+            and "No threats found" in (event.get("detail") or "")
+        )
+        if is_routine:
+            try:
+                this_time = datetime.fromisoformat(event["timestamp"])
+            except (KeyError, ValueError):
+                this_time = None
+            if last_routine_at is not None and this_time is not None:
+                if abs((last_routine_at - this_time).total_seconds()) < _ROUTINE_DEDUP_WINDOW_SECONDS:
+                    continue  # near-duplicate of the routine completion we already kept
+            if this_time is not None:
+                last_routine_at = this_time
+        filtered.append(event)
+    return filtered
+
+
+# icon, label, primary?, key - exactly one icon per card now (the earlier
+# two-icon-per-card design was reverted: magnifying glass dropped from
+# Quick/Full Scan, down-arrow dropped from Scan Downloads).
+_QUICK_ACTIONS = [
+    ("flash", "Quick Scan", True, "quick"),
+    ("monitor", "Full Scan", False, "full"),
+    ("folder", "Scan Downloads", False, "downloads"),
+    ("usb", "Scan USB", False, "usb"),
+]
+
+
+class QuickActionCard(QWidget):
+    clicked = Signal()
+
+    # Exact reference values: the primary (Quick Scan) card's icon is
+    # #B9FFDA and its label is #F2FFF7; the other three cards' icon is
+    # #7AA98C and their label is #C7E3D3 - two genuinely distinct tiers,
+    # not one shared default recolored on hover.
+    _ICON_HOVER_COLOR = theme.CYBER_NEON
+
+    def __init__(self, icon_name, label, primary=False, disabled=False, caption=None, parent=None):
+        super().__init__(parent)
+        # A plain QWidget subclass does NOT automatically track mouse-enter/
+        # leave for :hover QSS the way QAbstractButton/QFrame-derived
+        # widgets do - confirmed live: the #quickActionCard:hover rule was
+        # syntactically fine but never actually repainted the card without
+        # this. Needed for the hover CSS (and the icon-hover recolor below)
+        # to have any visual effect at all. Set BEFORE apply_glow() below
+        # (not after) - theme.apply_glow() checks WA_StyledBackground to
+        # decide whether it's safe to also set WA_TranslucentBackground
+        # (the seam-artifact fix): the two together break this widget's own
+        # QSS background/border painting entirely, confirmed live via a
+        # rendered comparison grid (the Quick Scan card silently lost its
+        # background/border, just the icon/text floating with nothing
+        # behind it) - order matters here, this must run first.
+        self.setAttribute(Qt.WA_Hover, True)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        if disabled:
+            self.setObjectName("quickActionCardDisabled")
+        elif primary:
+            self.setObjectName("quickActionCardPrimary")
+            # box-shadow 0 0 18px rgba(60,220,140,0.25) - Quick Scan card's
+            # exact glow.
+            theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=18)
+        else:
+            self.setObjectName("quickActionCard")
+        self.setCursor(Qt.PointingHandCursor if not disabled else Qt.ArrowCursor)
+        self.setFixedHeight(100)
+        self._disabled = disabled
+        self._primary = primary
+        self._icon_default_color = theme.PRIMARY_SCAN_ICON if primary else theme.CYBER_TEXT_SECONDARY
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(6)
+
+        icon_color = theme.CYBER_TEXT_MUTE if disabled else self._icon_default_color
+        self._icon_widget = icon_label(icon_name, size=20, color=icon_color)
+        layout.addWidget(self._icon_widget, alignment=Qt.AlignHCenter)
+
+        text_color = theme.CYBER_TEXT_MUTE if disabled else (theme.CYBER_TEXT_PRIMARY if primary else theme.CYBER_TEXT_SECONDARY)
+        text = make_label(label, "bodyText")
+        text.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {text_color};")
+        text.setAlignment(Qt.AlignCenter)
+        layout.addWidget(text)
+
+        if caption:
+            cap = make_label(caption, "metadataDisabled")
+            cap.setAlignment(Qt.AlignCenter)
+            layout.addWidget(cap)
+
+    def mousePressEvent(self, event):
+        if not self._disabled:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        if not self._disabled:
+            self._icon_widget.setStyleSheet(icon_style(self._ICON_HOVER_COLOR))
+            theme.apply_glow(self._icon_widget, theme.CYBER_NEON, blur=10, alpha=150)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if not self._disabled:
+            self._icon_widget.setStyleSheet(icon_style(self._icon_default_color))
+            theme.clear_glow(self._icon_widget)
+        super().leaveEvent(event)
+
+
+class DashboardPage(theme.PageCanvas):
+    scan_requested = Signal(str)  # "quick" | "full" | "downloads" | "usb"
+    navigate_requested = Signal(str)
+
+    def __init__(self, app_state, parent=None):
+        super().__init__(parent)
+        self.app_state = app_state
+        self.setObjectName("pageRoot")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        self.layout_ = QVBoxLayout(content)
+        self.layout_.setContentsMargins(
+            theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING
+        )
+        self.layout_.setSpacing(theme.CARD_GAP)
+
+        self.layout_.addWidget(page_title("Dashboard"))
+
+        self.hero_card = Card(object_name="heroCard", padding=22, glow=True,
+                              glow_color=theme.CYBER_GLOW_SOFT, glow_blur=30)
+        self.layout_.addWidget(self.hero_card)
+
+        quick_actions_row = QHBoxLayout()
+        quick_actions_row.setSpacing(theme.CARD_GAP)
+        self.layout_.addLayout(quick_actions_row)
+        self._quick_actions_row = quick_actions_row
+
+        # Extra breathing room between the scan buttons and Security
+        # Overview - theme.CARD_GAP alone (already applied uniformly by
+        # the outer layout's spacing) read as cramped.
+        self.layout_.addSpacing(theme.CARD_GAP)
+
+        self.overview_card = Card()
+        self.overview_card.addWidget(make_label("SECURITY OVERVIEW", "eyebrowLabel"))
+        self._overview_body = QVBoxLayout()
+        self.overview_card.addLayout(self._overview_body)
+        self.layout_.addWidget(self.overview_card)
+
+        self.activity_card = Card()
+        activity_header = QHBoxLayout()
+        activity_header.addWidget(make_label("RECENT ACTIVITY", "eyebrowLabel"))
+        activity_header.addStretch()
+        self._view_all_btn = QPushButton("View All")
+        self._view_all_btn.setObjectName("textButton")
+        self._view_all_btn.setStyleSheet(f"color: {theme.CYBER_NEON};")
+        self._view_all_btn.setCursor(Qt.PointingHandCursor)
+        self._view_all_btn.hide()
+        activity_header.addWidget(self._view_all_btn)
+        self.activity_card.addLayout(activity_header)
+        self._activity_body = QVBoxLayout()
+        self.activity_card.addLayout(self._activity_body)
+        self.layout_.addWidget(self.activity_card)
+
+        self.layout_.addStretch()
+
+        self.app_state.protection_changed.connect(self.refresh)
+        self.app_state.activity_changed.connect(self.refresh)
+        self.app_state.findings_changed.connect(self.refresh)
+
+        self.refresh()
+
+    # ------------------------------------------------------------------
+    def refresh(self):
+        self._refresh_hero()
+        self._refresh_quick_actions()
+        self._refresh_overview()
+        self._refresh_activity()
+
+    def _hero_accent_dot(self):
+        """
+        The single, deliberately tiny decorative warm-amber touch called for
+        in the new visual language - a small highlight point on the hero
+        card only, never anywhere functional/interactive. It carries no
+        status meaning (it's identical whether protection is on or off) and
+        is never clicked - purely a nod to the reference image's one warm
+        accent amid all the green.
+        """
+        dot = QLabel()
+        dot.setFixedSize(6, 6)
+        dot.setStyleSheet(f"background-color: {theme.BRAND_ORANGE}; border-radius: 3px;")
+        theme.apply_glow(dot, theme.BRAND_ORANGE, blur=10, alpha=120)
+        return dot
+
+    def _clear_layout(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            elif item.layout() is not None:
+                self._clear_layout(item.layout())
+
+    def _refresh_hero(self):
+        self._clear_layout(self.hero_card.layout_)
+        protected = self.app_state.is_realtime_protection_enabled()
+
+        if protected:
+            heading_row = QHBoxLayout()
+            heading_row.setSpacing(10)
+            heading_row.addWidget(StatusDot("active", glow=True))
+            # Exact reference values: hero heading 17px/600/#F2FFF7.
+            heading = make_label("Your PC is protected", "displayText")
+            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+            heading_row.addWidget(heading)
+            heading_row.addStretch()
+            heading_row.addWidget(self._hero_accent_dot())
+            self.hero_card.addLayout(heading_row)
+            subtext = body_secondary("Real-time protection is active")
+            subtext.setStyleSheet(f"font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};")
+            self.hero_card.addWidget(subtext)
+
+            self.hero_card.addWidget(hairline())
+            last_scan_raw = self.app_state.last_scan_at()
+            last_scan = format_timestamp(last_scan_raw) if last_scan_raw else "Never"
+            # "Threats Detected" read as contradicting "protected" right
+            # above it - this count is scan_log's currently-OPEN findings
+            # (not yet quarantined/deleted/ignored), so "Open Threats" is
+            # the accurate label: it doesn't claim they were handled
+            # (which "Blocked"/"Quarantined" would, incorrectly, for ones
+            # still sitting unresolved), and it doesn't read as "your PC
+            # is protected" being false.
+            open_threats = str(self.app_state.threats_detected_count())
+            self.hero_card.addWidget(stat_block([("LAST SCAN", last_scan), ("OPEN THREATS", open_threats)]))
+        else:
+            heading_row = QHBoxLayout()
+            heading_row.setSpacing(10)
+            heading_row.addWidget(StatusDot("attention", glow=True))
+            heading = make_label("Protection is disabled", "displayText")
+            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+            heading_row.addWidget(heading)
+            heading_row.addStretch()
+            heading_row.addWidget(self._hero_accent_dot())
+            self.hero_card.addLayout(heading_row)
+            subtext = body_secondary("Real-time protection is currently turned off.")
+            subtext.setStyleSheet(f"font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};")
+            self.hero_card.addWidget(subtext)
+
+            btn = QPushButton("Turn On Protection")
+            btn.setObjectName("primaryButton")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda: self.app_state.set_realtime_protection(True))
+            theme.apply_glow(btn, theme.CYBER_GLOW_NEON, blur=20, alpha=130)
+            row = QHBoxLayout()
+            row.addWidget(btn)
+            row.addStretch()
+            self.hero_card.addLayout(row)
+
+    def _refresh_quick_actions(self):
+        while self._quick_actions_row.count():
+            item = self._quick_actions_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        drives = self.app_state.connected_removable_drives()
+        for icon_name, label, primary, key in _QUICK_ACTIONS:
+            disabled = key == "usb" and len(drives) == 0
+            caption = "No drive" if (key == "usb" and disabled) else None
+            card = QuickActionCard(icon_name, label, primary=primary, disabled=disabled, caption=caption)
+            card.clicked.connect(lambda k=key: self.scan_requested.emit(k))
+            self._quick_actions_row.addWidget(card)
+
+    def _refresh_overview(self):
+        self._clear_layout(self._overview_body)
+        protected = self.app_state.is_realtime_protection_enabled()
+
+        # Real-Time Protection: the main item.
+        self._overview_body.addWidget(
+            status_row("Real-Time Protection", "active" if protected else "inactive",
+                       "Active" if protected else "Off")
+        )
+
+        # Behavior Monitoring / Downloads Protection / USB Auto-Scan only
+        # ever run because Real-Time Protection is on, so they're grouped
+        # as indented sub-items beneath it (smaller text, a subtle left
+        # rule) rather than three more independent-looking top-level rows.
+        sub_items = [
+            ("Behavior Monitoring", protected and self.app_state.is_module_enabled("behavior_monitoring")),
+            ("Downloads Protection", protected and self.app_state.is_module_enabled("downloads_autoscan")),
+            ("USB Auto-Scan", protected and self.app_state.is_module_enabled("usb_autoscan")),
+        ]
+        sub_group = QFrame()
+        sub_group.setObjectName("overviewSubgroup")
+        sub_layout = QVBoxLayout(sub_group)
+        sub_layout.setContentsMargins(16, 2, 0, 2)
+        sub_layout.setSpacing(0)
+        for label, active in sub_items:
+            sub_layout.addWidget(
+                status_row(label, "active" if active else "inactive", "Active" if active else "Off", compact=True)
+            )
+        self._overview_body.addWidget(sub_group)
+        self._overview_body.addWidget(hairline())
+
+        # Windows Startup: unrelated to real-time protection - stays a
+        # separate top-level item, not part of the group above.
+        startup = self.app_state.is_startup_enabled()
+        self._overview_body.addWidget(
+            status_row("Windows Startup", "active" if startup else "inactive", "Enabled" if startup else "Off")
+        )
+
+    def _refresh_activity(self):
+        self._clear_layout(self._activity_body)
+        pool = activity_log.recent_events(limit=30)
+        meaningful = _filter_meaningful_events(pool)
+        events = meaningful[:5]
+
+        if not events:
+            empty = EmptyState("You're all clear", "No recent security issues have been detected.")
+            empty.setFixedHeight(140)
+            self._activity_body.addWidget(empty)
+            self._view_all_btn.hide()
+            return
+
+        for event in events:
+            row = QHBoxLayout()
+            row.setSpacing(10)
+            attention_kinds = {"threat_detected", "behavior_alert"}
+            dot = StatusDot("attention" if event["kind"] in attention_kinds else "active")
+            row.addWidget(dot)
+            col = QVBoxLayout()
+            col.setSpacing(2)
+            col.addWidget(body_text(event["title"]))
+            when = format_timestamp(event["timestamp"])
+            col.addWidget(make_label(when, "metadataText"))
+            row.addLayout(col)
+            row.addStretch()
+            self._activity_body.addLayout(row)
+
+        self._view_all_btn.setVisible(len(meaningful) > 5)
+
+
+========== FILE: devadara_gui/pages/scan.py ==========
+
+"""
+scan.py
+
+The Scan page (Section 4): a mode-radio row + checkbox tree for selection
+(assets/scan_page_reference.html, confirmed with the user - see
+devadara_gui/pages/scan_tree.py for the widget that reproduces it), then
+scanning (full takeover, live progress - assets/scan_progress_reference.html,
+also confirmed: Full/Mini/Log states + a Stop confirmation) -> completed.
+The tree replaces the four separate mode cards this page used to show, and
+also replaces the Tools tab entirely: System Area and Deep Inspection are
+this same tree's groups, running the exact backend calls the removed
+Persistence Check / Process Scan / Memory Scan tools used (see
+AppState.custom_scan_job()).
+
+Every scan still runs on a background QThread via
+devadara_gui.services.workers.StoppableWorker, wrapping the real
+devadara_gui.services.app_state scan jobs - the UI thread never blocks.
+"""
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from devadara_gui import theme
+from devadara_gui.components import (
+    Card,
+    body_secondary,
+    key_value_list,
+    make_label,
+    page_title,
+    section_title,
+)
+from devadara_gui.dialogs import ConfirmationDialog
+from devadara_gui.pages.scan_tree import (
+    DEEP_INSPECTION_IDS,
+    MODE_LABELS,
+    SYSTEM_AREA_IDS,
+    ScanModeRow,
+    ScanTreeWidget,
+    build_tree_spec,
+)
+from devadara_gui.results_views import PersistenceResultsView, ProcessResultsView
+from devadara_gui.scan_mini_popup import ScanMiniPopup
+from devadara_gui.services.workers import StoppableWorker
+
+_FLAGGED_TIERS = {"malware", "suspicious", "known_bad"}
+_LOG_MAX_ENTRIES = 400
+_FULL_VIEW_WIDTH = 600
+
+
+def _format_elapsed(seconds):
+    seconds = int(seconds)
+    minutes, secs = divmod(seconds, 60)
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _elide_left(text, max_len=64):
+    if text is None:
+        return "-"
+    if len(text) <= max_len:
+        return text
+    return "..." + text[-(max_len - 3):]
+
+
+def _tier_result_word(tier):
+    return "flagged" if tier in _FLAGGED_TIERS else "clean"
+
+
+class ScanPage(theme.PageCanvas):
+    navigate_requested = Signal(str)
+
+    def __init__(self, app_state, parent=None):
+        super().__init__(parent)
+        self.app_state = app_state
+        self.setObjectName("pageRoot")
+        self._worker = None
+        self._current_mode = None
+        self._minimized = False
+        self._log_rows = []
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING)
+        outer.setSpacing(theme.CARD_GAP)
+        outer.addWidget(page_title("Scan"))
+
+        self.stack = QStackedWidget()
+        outer.addWidget(self.stack)
+
+        self.selection_widget = self._build_selection_widget()
+        self.scanning_widget = self._build_scanning_widget()
+        self.completed_widget = self._build_completed_widget()
+
+        self.stack.addWidget(self.selection_widget)
+        self.stack.addWidget(self.scanning_widget)
+        self.stack.addWidget(self.completed_widget)
+        self.stack.setCurrentWidget(self.selection_widget)
+
+        self.mini_popup = ScanMiniPopup()
+        self.mini_popup.detail_clicked.connect(self._on_mini_detail_clicked)
+        self.mini_popup.stop_clicked.connect(self._confirm_and_stop)
+
+    # ------------------------------------------------------------------
+    def _build_selection_widget(self):
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setSpacing(theme.CARD_GAP)
+
+        card = Card(object_name="card", padding=20)
+        card.addWidget(body_secondary(
+            "Pick a mode, or check/uncheck items yourself for a custom scan.", wrap=True,
+        ))
+
+        self.mode_row = ScanModeRow()
+        card.addWidget(self.mode_row)
+
+        drive_items = self.app_state.list_fixed_drive_items()
+        tree_spec = build_tree_spec(drive_items)
+        self.tree = ScanTreeWidget(tree_spec)
+        self.mode_row.mode_selected.connect(self.tree.apply_mode)
+        self.tree.selection_changed.connect(self._refresh_scan_button_state)
+
+        content_row = QHBoxLayout()
+        content_row.setSpacing(20)
+        content_row.addWidget(self.tree, 1)
+
+        button_col = QVBoxLayout()
+        button_col.setSpacing(10)
+        button_col.setAlignment(Qt.AlignTop)
+
+        self.scan_button = QPushButton("Scan")
+        self.scan_button.setObjectName("primaryButton")
+        self.scan_button.setCursor(Qt.PointingHandCursor)
+        self.scan_button.setFixedWidth(150)
+        self.scan_button.setMinimumHeight(56)
+        theme.apply_glow(self.scan_button, theme.CYBER_GLOW_NEON, blur=18)
+        self.scan_button.clicked.connect(self._on_scan_clicked)
+        button_col.addWidget(self.scan_button)
+
+        self.usb_note = make_label("", "metadataDisabled")
+        self.usb_note.setWordWrap(True)
+        self.usb_note.setAlignment(Qt.AlignHCenter)
+        self.usb_note.setFixedWidth(150)
+        button_col.addWidget(self.usb_note)
+
+        content_row.addLayout(button_col)
+        card.addLayout(content_row)
+
+        outer.addWidget(card)
+        outer.addStretch()
+
+        self._refresh_scan_button_state()
+        return widget
+
+    def _refresh_scan_button_state(self):
+        checked = set(self.tree.checked_ids())
+        drives = self.app_state.connected_removable_drives()
+        usb_checked = "usb" in checked
+        self.usb_note.setText("No USB drive connected" if (usb_checked and not drives) else "")
+        only_usb_checked = checked == {"usb"}
+        disabled = (not checked) or (only_usb_checked and not drives)
+        self.scan_button.setEnabled(not disabled)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_scan_button_state()
+        # The user navigated back to Scan (sidebar, or Fix All) while
+        # minimized - treat that exactly like clicking "Detail >>"/the mini
+        # popup's close button, so the app never ends up with both the
+        # full screen AND the mini popup implying two different states.
+        if self._minimized:
+            self._on_mini_detail_clicked()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "persistence_view"):
+            self.persistence_view.reposition(self.size())
+        if hasattr(self, "process_view"):
+            self.process_view.reposition(self.size())
+
+    def closeEvent(self, event):
+        self.mini_popup.close()
+        super().closeEvent(event)
+
+    @staticmethod
+    def _centered(inner_widget):
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(inner_widget)
+        row.addStretch()
+        outer = QVBoxLayout()
+        outer.addStretch()
+        outer.addLayout(row)
+        outer.addStretch()
+        return outer
+
+    @staticmethod
+    def _result_row(label_text):
+        row = QWidget()
+        row.setObjectName("transparentPanel")
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.addWidget(make_label(label_text, "metadataText"))
+        layout.addStretch()
+        value_label = make_label("0", "bodyText")
+        value_label.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+        layout.addWidget(value_label)
+        return row, value_label
+
+    # ------------------------------------------------------------------
+    def _build_scanning_widget(self):
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self.scan_view_stack = QStackedWidget()
+        outer.addWidget(self.scan_view_stack)
+
+        self.full_view = self._build_full_view()
+        self.log_view = self._build_log_view()
+        self.scan_view_stack.addWidget(self.full_view)
+        self.scan_view_stack.addWidget(self.log_view)
+        self.scan_view_stack.setCurrentWidget(self.full_view)
+
+        return widget
+
+    def _build_full_view(self):
+        container = QWidget()
+        container.setFixedWidth(_FULL_VIEW_WIDTH)
+        inner = QVBoxLayout(container)
+        inner.setSpacing(14)
+
+        header_row = QHBoxLayout()
+        title = make_label("Scanning your PC", "sectionTitle")
+        title.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+        header_row.addWidget(title)
+        header_row.addStretch()
+        self.minimize_button = QPushButton("â€” Minimize")
+        self.minimize_button.setObjectName("secondaryButton")
+        self.minimize_button.setCursor(Qt.PointingHandCursor)
+        self.minimize_button.clicked.connect(self._on_minimize_clicked)
+        header_row.addWidget(self.minimize_button)
+        inner.addLayout(header_row)
+
+        # -- Current Location card -----------------------------------------
+        location_card = Card()
+        location_card.addWidget(make_label("CURRENT LOCATION", "eyebrowLabel"))
+        self.location_label = make_label("-", "metadataText")
+        self.location_label.setStyleSheet(
+            f"font-family: Consolas, monospace; font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};"
+        )
+        self.location_label.setWordWrap(False)
+        location_card.addWidget(self.location_label)
+
+        percent_row = QHBoxLayout()
+        percent_row.setSpacing(12)
+        self.percentage_label = make_label("", "displayText")
+        self.percentage_label.setStyleSheet(f"font-size: 22px; font-weight: 700; color: {theme.CYBER_TEXT_PRIMARY};")
+        self.percentage_label.setFixedWidth(70)
+        percent_row.addWidget(self.percentage_label)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setTextVisible(False)
+        percent_row.addWidget(self.progress_bar, 1)
+        location_card.addLayout(percent_row)
+
+        self.status_text_label = make_label("Scanning files and folders...", "metadataText")
+        location_card.addWidget(self.status_text_label)
+        inner.addWidget(location_card)
+
+        # -- Scan Result card -------------------------------------------------
+        result_card = Card()
+        result_card.addWidget(make_label("SCAN RESULT", "eyebrowLabel"))
+        files_row, self.scanning_files_value = self._result_row("Files checked")
+        threats_row, self.scanning_threats_value = self._result_row("Threats detected")
+        suspicious_row, self.scanning_suspicious_value = self._result_row("Suspicious items")
+        hidden_row, self.scanning_hidden_value = self._result_row("Hidden files")
+        for row in (files_row, threats_row, suspicious_row, hidden_row):
+            result_card.addWidget(row)
+        inner.addWidget(result_card)
+
+        # -- Fix All (never auto-fixes anything - navigates to Threats for
+        # the user to review/act on manually; hidden while nothing's found) -
+        self.fix_all_button = QPushButton("Fix All")
+        self.fix_all_button.setObjectName("primaryButton")
+        self.fix_all_button.setCursor(Qt.PointingHandCursor)
+        theme.apply_glow(self.fix_all_button, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
+        self.fix_all_button.clicked.connect(self._on_fix_all_clicked)
+        self.fix_all_button.hide()
+        inner.addWidget(self.fix_all_button)
+
+        # -- View Log / Stop Scan ------------------------------------------
+        actions_row = QHBoxLayout()
+        actions_row.setSpacing(10)
+        self.view_log_button = QPushButton("View Log")
+        self.view_log_button.setObjectName("secondaryButton")
+        self.view_log_button.setCursor(Qt.PointingHandCursor)
+        self.view_log_button.clicked.connect(self._on_view_log_clicked)
+        actions_row.addWidget(self.view_log_button)
+        self.stop_button = QPushButton("Stop Scan")
+        self.stop_button.setObjectName("secondaryButton")
+        self.stop_button.setCursor(Qt.PointingHandCursor)
+        self.stop_button.clicked.connect(self._confirm_and_stop)
+        actions_row.addWidget(self.stop_button)
+        inner.addLayout(actions_row)
+
+        widget = QWidget()
+        widget.setLayout(self._centered(container))
+        return widget
+
+    def _build_log_view(self):
+        container = QWidget()
+        container.setFixedWidth(_FULL_VIEW_WIDTH)
+        inner = QVBoxLayout(container)
+        inner.setSpacing(14)
+
+        header_row = QHBoxLayout()
+        title = make_label("Scan Activity Log", "sectionTitle")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+        header_row.addWidget(title)
+        header_row.addStretch()
+        back_btn = QPushButton("â† Back")
+        back_btn.setObjectName("secondaryButton")
+        back_btn.setCursor(Qt.PointingHandCursor)
+        back_btn.clicked.connect(self._on_log_back_clicked)
+        header_row.addWidget(back_btn)
+        inner.addLayout(header_row)
+
+        log_card = Card()
+        self.log_scroll = QScrollArea()
+        self.log_scroll.setWidgetResizable(True)
+        self.log_scroll.setFixedHeight(240)
+        self.log_body = QWidget()
+        self.log_body.setObjectName("transparentPanel")
+        self.log_body_layout = QVBoxLayout(self.log_body)
+        self.log_body_layout.setContentsMargins(0, 0, 0, 0)
+        self.log_body_layout.setSpacing(2)
+        self.log_body_layout.addStretch()
+        self.log_scroll.setWidget(self.log_body)
+        log_card.addWidget(self.log_scroll)
+
+        self.log_live_label = make_label("â‹¯ live updating as scan continues", "metadataDisabled")
+        log_card.addWidget(self.log_live_label)
+        inner.addWidget(log_card)
+
+        widget = QWidget()
+        widget.setLayout(self._centered(container))
+        return widget
+
+    def _clear_log(self):
+        for label in self._log_rows:
+            label.deleteLater()
+        self._log_rows = []
+        self.log_live_label.show()
+
+    def _append_log_entry(self, path, tier):
+        if not path:
+            return
+        name = path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+        word = _tier_result_word(tier)
+        flagged = word == "flagged"
+        color = theme.CYBER_TEXT_PRIMARY if flagged else theme.CYBER_TEXT_SECONDARY
+        weight = "700" if flagged else "400"
+        label = make_label(f"âœ“ Checked: {name} â€” {word}", "bodyText")
+        label.setStyleSheet(
+            f"font-family: Consolas, monospace; font-size: 11px; color: {color}; font-weight: {weight};"
+        )
+        label.setToolTip(path)
+        # Insert before the trailing stretch, which stays last.
+        self.log_body_layout.insertWidget(self.log_body_layout.count() - 1, label)
+        self._log_rows.append(label)
+        if len(self._log_rows) > _LOG_MAX_ENTRIES:
+            oldest = self._log_rows.pop(0)
+            self.log_body_layout.removeWidget(oldest)
+            oldest.deleteLater()
+        self.log_scroll.verticalScrollBar().setValue(self.log_scroll.verticalScrollBar().maximum())
+
+    # ------------------------------------------------------------------
+    def _build_completed_widget(self):
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setSpacing(theme.CARD_GAP)
+
+        title = make_label("Scan completed", "sectionTitle")
+        title.setStyleSheet(f"font-size: 20px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+        outer.addWidget(title, alignment=Qt.AlignHCenter)
+
+        self.completed_card = Card()
+        self.completed_card.setFixedWidth(480)
+        outer.addWidget(self.completed_card, alignment=Qt.AlignHCenter)
+
+        button_row = QHBoxLayout()
+        self.done_button = QPushButton("Done")
+        self.done_button.setObjectName("primaryButton")
+        self.done_button.setCursor(Qt.PointingHandCursor)
+        self.done_button.clicked.connect(self._go_to_selection)
+        theme.apply_glow(self.done_button, theme.CYBER_GLOW_NEON, blur=20, alpha=130)
+        button_row.addWidget(self.done_button)
+
+        self.review_button = QPushButton("Done")
+        self.review_button.setObjectName("textButton")
+        self.review_button.setCursor(Qt.PointingHandCursor)
+        self.review_button.clicked.connect(self._go_to_selection)
+        button_row.addWidget(self.review_button)
+        outer.addLayout(button_row)
+
+        # System Area / Deep Inspection results (only shown when that phase
+        # ran and produced entries) - reuses the exact rendering the removed
+        # Persistence Check / Process Scan tools used (results_views.py),
+        # rather than rebuilding it for this page.
+        self.persistence_section_title = section_title("System Area Results")
+        self.persistence_section_title.hide()
+        outer.addWidget(self.persistence_section_title)
+        self.persistence_view = PersistenceResultsView()
+        self.persistence_view.hide()
+        outer.addWidget(self.persistence_view)
+
+        self.process_section_title = section_title("Deep Inspection Results")
+        self.process_section_title.hide()
+        outer.addWidget(self.process_section_title)
+        self.process_view = ProcessResultsView(self.app_state)
+        self.process_view.hide()
+        outer.addWidget(self.process_view, 1)
+
+        return widget
+
+    def _go_to_selection(self):
+        self.stack.setCurrentWidget(self.selection_widget)
+        self._refresh_scan_button_state()
+
+    # ------------------------------------------------------------------
+    def start_scan(self, mode):
+        """Entry point for Dashboard's four quick-action cards - applies
+        that mode's default tree selection, then runs it immediately."""
+        if self._worker is not None:
+            return
+        self.mode_row.set_active_mode(mode)
+        self.tree.apply_mode(mode)
+        self._refresh_scan_button_state()
+        if not self.scan_button.isEnabled():
+            return
+        self._run_selected_scan()
+
+    def _on_scan_clicked(self):
+        self._run_selected_scan()
+
+    def _build_job_from_tree(self):
+        checked = set(self.tree.checked_ids())
+        drive_items = self.app_state.list_fixed_drive_items()
+        drive_paths = [d["path"] for d in drive_items if d["id"] in checked]
+
+        location_map = self.app_state.common_location_paths()
+        location_paths = [path for item_id, path in location_map.items() if item_id in checked]
+
+        system_area = bool(checked & set(SYSTEM_AREA_IDS)) or "sys" in checked
+        deep_inspection = bool(checked & set(DEEP_INSPECTION_IDS)) or "tools" in checked
+
+        usb_path = None
+        if "usb" in checked:
+            drives = self.app_state.connected_removable_drives()
+            if drives:
+                usb_path = drives[0]
+
+        return self.app_state.custom_scan_job(drive_paths, location_paths, system_area, deep_inspection, usb_path)
+
+    def _run_selected_scan(self):
+        if self._worker is not None:
+            return
+        job = self._build_job_from_tree()
+
+        self._current_mode = self.mode_row.current_mode
+        self._minimized = False
+        self.mini_popup.hide()
+        self.scan_view_stack.setCurrentWidget(self.full_view)
+        self._clear_log()
+
+        self.location_label.setText("-")
+        self.status_text_label.setText("Scanning files and folders...")
+        self.percentage_label.setText("")
+        self.progress_bar.setRange(0, 0)
+        self.scanning_files_value.setText("0")
+        self.scanning_threats_value.setText("0")
+        self.scanning_suspicious_value.setText("0")
+        self.scanning_hidden_value.setText("0")
+        self.fix_all_button.hide()
+        self.stop_button.setEnabled(True)
+        self.stack.setCurrentWidget(self.scanning_widget)
+
+        self._worker = StoppableWorker(job)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished_ok.connect(self._on_finished)
+        self._worker.failed.connect(self._on_failed)
+        self._worker.start()
+
+    def _confirm_and_stop(self):
+        if self._worker is None:
+            return
+        if ConfirmationDialog.confirm(
+            self, "Stop this scan?",
+            "The scan is still in progress. Stopping now will leave the remaining files "
+            "unchecked, and any threats not yet found will stay on your system.",
+            confirm_label="Stop Scan", destructive=True, cancel_label="Keep Scanning",
+        ):
+            self.stop_button.setEnabled(False)
+            self.mini_popup.set_stop_enabled(False)
+            self._worker.request_stop()
+
+    # ------------------------------------------------------------------
+    def _on_minimize_clicked(self):
+        self._minimized = True
+        # Switch the main window's content away from this takeover screen
+        # BEFORE showing the mini popup (not after) - navigate_requested is
+        # a direct/synchronous connection to MainWindow.navigate_to(), so
+        # by the time this line returns the Dashboard is already the
+        # QStackedWidget's current widget and this page is hidden. Doing
+        # it first (rather than showing the popup, then switching) means
+        # there's no window where the popup's own entrance animation is
+        # competing with a same-frame page switch for the compositor's
+        # attention - confirmed necessary: a real live screenshot caught
+        # this screen still showing behind the popup when the popup was
+        # shown first.
+        self.navigate_requested.emit("dashboard")
+        QApplication.processEvents()
+        self.mini_popup.show_popup(MODE_LABELS.get(self._current_mode, "Scan"))
+        self.mini_popup.set_stop_enabled(True)
+
+    def _on_mini_detail_clicked(self):
+        self._minimized = False
+        self.mini_popup.hide()
+        self.scan_view_stack.setCurrentWidget(self.full_view)
+        self.navigate_requested.emit("scan")
+
+    def _on_view_log_clicked(self):
+        self.scan_view_stack.setCurrentWidget(self.log_view)
+
+    def _on_log_back_clicked(self):
+        self.scan_view_stack.setCurrentWidget(self.full_view)
+
+    def _on_fix_all_clicked(self):
+        # Never auto-fixes/deletes anything - purely a shortcut to the
+        # Threats page's own manual quarantine/delete/ignore actions. The
+        # scan itself (self._worker) keeps running in the background
+        # exactly as before; navigating away doesn't touch it.
+        self.navigate_requested.emit("threats")
+
+    # ------------------------------------------------------------------
+    def _status_text_for(self, info):
+        phase = info.get("phase", "")
+        phase_index = info.get("phase_index", 1)
+        phase_count = info.get("phase_count", 1)
+        prefix = f"Step {phase_index} of {phase_count}: {phase} â€” " if phase_count > 1 else ""
+        kind = info.get("kind")
+        if kind == "entries":
+            return f"{prefix}Checking persistence entries ({info['checked']} / {info['total']})..."
+        if kind == "indeterminate":
+            return f"{prefix}Scanning running processes for suspicious indicators..."
+        return f"{prefix}Scanning files and folders..."
+
+    def _update_fix_all(self, fixable_count):
+        if fixable_count > 0:
+            plural = "s" if fixable_count != 1 else ""
+            self.fix_all_button.setText(f"Fix All â€” Review {fixable_count} Item{plural}")
+            self.fix_all_button.show()
+        else:
+            self.fix_all_button.hide()
+
+    def _on_progress(self, info):
+        files_scanned = info.get("files_scanned", 0)
+        known = info.get("known_bad_count", 0)
+        flagged = info.get("flagged_count", 0)
+        hidden = info.get("hidden_count", 0)
+        percent = info.get("percent")
+        current_path = info.get("current_path")
+        current_tier = info.get("current_tier")
+
+        self.scanning_files_value.setText(f"{files_scanned:,}")
+        self.scanning_threats_value.setText(str(known))
+        self.scanning_suspicious_value.setText(str(flagged))
+        self.scanning_hidden_value.setText(str(hidden))
+
+        location_text = _elide_left(current_path) if current_path else "-"
+        self.location_label.setText(location_text)
+        self.status_text_label.setText(self._status_text_for(info))
+
+        if percent is not None:
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(percent)
+            self.percentage_label.setText(f"{percent}%")
+        else:
+            self.progress_bar.setRange(0, 0)
+            self.percentage_label.setText("")
+
+        self._update_fix_all(known + flagged)
+        self._append_log_entry(current_path, current_tier)
+
+        if self._minimized:
+            self.mini_popup.set_path(location_text)
+            self.mini_popup.set_progress(percent)
+            self.mini_popup.set_counts(known + flagged, hidden)
+
+    def _on_finished(self, outcome):
+        mode = self._current_mode
+        self._worker = None
+        self._minimized = False
+        self.mini_popup.hide()
+        self.app_state.finalize_scan(MODE_LABELS.get(mode, "Scan"), outcome)
+        self._show_completed(outcome)
+
+    def _on_failed(self, _error_text):
+        self._worker = None
+        self._minimized = False
+        self.mini_popup.hide()
+        self._go_to_selection()
+
+    def _show_completed(self, outcome):
+        while self.completed_card.layout_.count():
+            item = self.completed_card.layout_.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        threats = len(outcome["known_bad_findings"])
+        suspicious = len(outcome["to_review"])
+        for entry in outcome.get("persistence_entries", []) + outcome.get("process_entries", []):
+            scan = entry.get("scan")
+            if scan is None:
+                continue
+            if scan.get("tier") == "known_bad":
+                threats += 1
+            elif scan.get("tier") in ("malware", "suspicious"):
+                suspicious += 1
+
+        rows = [
+            ("Files scanned", f"{outcome['files_scanned']:,}"),
+            ("Threats detected", str(threats)),
+            ("Suspicious items", str(suspicious)),
+            ("Hidden files", str(len(outcome.get("hidden_files", [])))),
+            ("Duration", _format_elapsed(outcome["elapsed_seconds"])),
+        ]
+        self.completed_card.addWidget(key_value_list(rows))
+
+        if threats or suspicious:
+            self.done_button.setText("Review Threats")
+            self.done_button.clicked.disconnect()
+            self.done_button.clicked.connect(self._review_threats)
+            self.review_button.setText("Done")
+            self.review_button.show()
+        else:
+            self.done_button.setText("Done")
+            try:
+                self.done_button.clicked.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+            self.done_button.clicked.connect(self._go_to_selection)
+            self.review_button.hide()
+
+        persistence_entries = outcome.get("persistence_entries", [])
+        if persistence_entries:
+            self.persistence_view.render(persistence_entries)
+            self.persistence_section_title.show()
+            self.persistence_view.show()
+        else:
+            self.persistence_section_title.hide()
+            self.persistence_view.hide()
+
+        process_entries = outcome.get("process_entries", [])
+        if process_entries:
+            self.process_view.render(process_entries)
+            self.process_section_title.show()
+            self.process_view.show()
+        else:
+            self.process_section_title.hide()
+            self.process_view.hide()
+
+        self.stack.setCurrentWidget(self.completed_widget)
+
+    def _review_threats(self):
+        self._go_to_selection()
+        self.navigate_requested.emit("threats")
+
+
+========== FILE: devadara_gui/pages/scan_tree.py ==========
+
+"""
+scan_tree.py
+
+The Scan page's mode-radio-row + checkbox tree (assets/scan_page_reference.html,
+confirmed with the user - see that file's inline <script> for the exact
+selection/expand-collapse behavior this reproduces in PySide6). Computer
+Drive's children are the only dynamic part - populated from the real fixed
+drives on this machine (see AppState.list_fixed_drive_items()), everything
+else is the reference's fixed tree shape.
+
+Behavior (kept identical to the reference's plain-JS implementation):
+  - Clicking a mode radio re-applies that mode's default checked set,
+    replacing whatever was checked before.
+  - Clicking a GROUP checkbox toggles all its children to match it.
+  - Clicking a CHILD checkbox toggles only that child - it never touches
+    its parent's or siblings' checked state.
+  - Clicking a group's arrow toggles that group's expanded/collapsed
+    state only - it never touches any checked state.
+  - Which mode radio reads as "selected" only changes when a radio itself
+    is clicked - manually editing checkboxes afterward does not clear it
+    (exactly the reference's `current` variable semantics).
+"""
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QRadioButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
+
+from devadara_gui import theme
+from devadara_gui.icons import icon_label
+
+# Pulled from theme.py's shared tokens, not the reference file's raw hex,
+# per the app-wide color-consistency pass: the reference mockup's own
+# #3CDC8C/#5D8571 were a one-off third accent/muted-text pair that didn't
+# match any other screen in the app - KELLY_GREEN/TEXT_DISABLED are the
+# app's real accent and muted-text tiers (see theme.py), used here instead
+# so the tree reads as the same system as the rest of the app rather than
+# its own palette.
+TREE_ACCENT = theme.CYBER_NEON
+TEXT_CHECKED_PARENT = theme.CYBER_TEXT_PRIMARY
+TEXT_CHECKED_CHILD = theme.CYBER_TEXT_SECONDARY
+TEXT_UNCHECKED = theme.CYBER_TEXT_MUTE
+ARROW_COLOR = theme.CYBER_NEON
+MODE_ACTIVE_TEXT = theme.CYBER_TEXT_PRIMARY
+MODE_INACTIVE_TEXT = theme.CYBER_TEXT_MUTE
+
+STATIC_TREE = [
+    # Group rows carry an "icon" key naming an devadara_gui.icons.GLYPHS
+    # entry - a proper single-color line-icon glyph (Segoe Fluent Icons),
+    # rendered through icon_label()/icon_style() so it fully respects the
+    # app's theme color tokens. The reference mockup's own group labels
+    # used raw color-emoji characters (\ud83d\udcbe/\u2699\ufe0f/\ud83d\udcc1/\ud83d\udee0\ufe0f/\ud83d\udd0c) instead - a color-emoji
+    # glyph is rendered by the OS's own multi-color emoji font (Segoe UI
+    # Emoji on Windows) with its own BAKED-IN palette, immune to any QSS
+    # `color:` override. Confirmed live: that's exactly why these rows
+    # appeared purple/pink-tinted rather than the app's green accent - not
+    # a QSS/theme-token bug, an uncontrollable native emoji render that no
+    # color token could ever fix. Child rows (e.g. "Local Disk (C:)",
+    # "Memory Processes") intentionally carry no icon at all, unchanged.
+    {"id": "drive", "text": "Computer Drive", "indent": 0, "parent": None, "group": True, "icon": "drive"},
+    # "drive_<n>" children are inserted here at runtime (see build_tree_spec)
+    {"id": "sys", "text": "System Area", "indent": 0, "parent": None, "group": True, "icon": "settings"},
+    {"id": "mem", "text": "Memory Processes", "indent": 1, "parent": "sys"},
+    {"id": "svc", "text": "Services", "indent": 1, "parent": "sys"},
+    {"id": "reg", "text": "Registry Area", "indent": 1, "parent": "sys"},
+    {"id": "startup", "text": "Start-Up Area", "indent": 1, "parent": "sys"},
+    {"id": "quickfolders", "text": "Common Locations", "indent": 0, "parent": None, "group": True, "icon": "folder"},
+    {"id": "dl", "text": "Downloads", "indent": 1, "parent": "quickfolders"},
+    {"id": "desktop", "text": "Desktop", "indent": 1, "parent": "quickfolders"},
+    {"id": "docs", "text": "Documents", "indent": 1, "parent": "quickfolders"},
+    {"id": "temp", "text": "Temp", "indent": 1, "parent": "quickfolders"},
+    {"id": "tools", "text": "Deep Inspection", "indent": 0, "parent": None, "group": True, "icon": "tools"},
+    {"id": "proc", "text": "Running Processes", "indent": 1, "parent": "tools"},
+    {"id": "ram", "text": "Process Memory", "indent": 1, "parent": "tools"},
+    {"id": "usb", "text": "USB Drive", "indent": 0, "parent": None, "group": False, "icon": "usb"},
+]
+
+SYSTEM_AREA_IDS = ("mem", "svc", "reg", "startup")
+COMMON_LOCATION_IDS = {"dl": "Downloads", "desktop": "Desktop", "docs": "Documents", "temp": "Temp"}
+DEEP_INSPECTION_IDS = ("proc", "ram")
+
+
+def build_tree_spec(drive_items):
+    """
+    drive_items: [{"id", "label", "path"}, ...] from
+    AppState.list_fixed_drive_items() - inserted as Computer Drive's
+    children, in place of the reference's hardcoded C:/D:/E: mockup rows.
+    """
+    spec = []
+    for item in STATIC_TREE:
+        spec.append(item)
+        if item["id"] == "drive":
+            for drive in drive_items:
+                spec.append({"id": drive["id"], "text": drive["label"], "indent": 1, "parent": "drive"})
+    return spec
+
+
+def default_mode_checks(tree_spec):
+    all_ids = [item["id"] for item in tree_spec]
+    return {
+        "quick": ["quickfolders"] + list(COMMON_LOCATION_IDS.keys()),
+        "full": all_ids,
+        "downloads": ["quickfolders", "dl"],
+        "usb": ["usb"],
+    }
+
+
+MODE_LABELS = {
+    "quick": "Quick Scan",
+    "full": "Full Scan",
+    "downloads": "Scan Downloads",
+    "usb": "Scan USB",
+}
+
+
+class _TreeCheckBox(QCheckBox):
+    """Plain QCheckBox, re-skinned to the reference's accent-green indicator."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(f"""
+            QCheckBox::indicator {{
+                width: 14px; height: 14px; border-radius: 3px;
+                border: 1px solid {theme.CYBER_BORDER_STRONG};
+                background: {theme.CYBER_BG_INSET};
+            }}
+            QCheckBox::indicator:checked {{
+                border: 1px solid {TREE_ACCENT};
+                background: {TREE_ACCENT};
+            }}
+        """)
+
+
+class _ArrowLabel(QLabel):
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(14)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setStyleSheet(f"color: {ARROW_COLOR}; font-size: 11px; background: transparent;")
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class _ClickableLabel(QLabel):
+    clicked = Signal()
+
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class _TreeRow(QWidget):
+    def __init__(self, item, on_checkbox_toggled, on_arrow_clicked, parent=None):
+        super().__init__(parent)
+        self.item = item
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(item["indent"] * 20, 3, 0, 3)
+        layout.setSpacing(6)
+
+        if item.get("group"):
+            self.arrow = _ArrowLabel()
+            self.arrow.clicked.connect(lambda: on_arrow_clicked(item["id"]))
+            layout.addWidget(self.arrow)
+        else:
+            self.arrow = None
+            spacer = QLabel("")
+            spacer.setFixedWidth(14)
+            layout.addWidget(spacer)
+
+        self.checkbox = _TreeCheckBox()
+        self.checkbox.toggled.connect(lambda checked: on_checkbox_toggled(item["id"], checked))
+        layout.addWidget(self.checkbox)
+
+        icon_name = item.get("icon")
+        if icon_name:
+            layout.addWidget(icon_label(icon_name, size=14, color=TREE_ACCENT))
+
+        self.label = _ClickableLabel(item["text"])
+        self.label.clicked.connect(self.checkbox.click)
+        layout.addWidget(self.label, 1)
+
+    def set_arrow_expanded(self, expanded):
+        if self.arrow is not None:
+            self.arrow.setText("\u25be" if expanded else "\u25b8")
+
+    def set_checked_silently(self, checked):
+        self.checkbox.blockSignals(True)
+        self.checkbox.setChecked(checked)
+        self.checkbox.blockSignals(False)
+        self._restyle(checked)
+
+    def _restyle(self, checked):
+        if not checked:
+            color = TEXT_UNCHECKED
+        elif self.item["indent"] == 0:
+            color = TEXT_CHECKED_PARENT
+        else:
+            color = TEXT_CHECKED_CHILD
+        weight = "600" if (checked and self.item["indent"] == 0) else "400"
+        self.label.setStyleSheet(f"color: {color}; font-weight: {weight}; font-size: 12px; background: transparent;")
+
+
+class ScanModeRow(QWidget):
+    """The four mode radios, laid out full-width above the tree box."""
+
+    mode_selected = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_mode = None
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(20)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        self._buttons = {}
+        for key in ("quick", "full", "downloads", "usb"):
+            radio = QRadioButton(MODE_LABELS[key])
+            radio.setCursor(Qt.PointingHandCursor)
+            radio.toggled.connect(lambda checked, k=key: self._on_toggled(k, checked))
+            self.mode_group.addButton(radio)
+            self._buttons[key] = radio
+            row.addWidget(radio)
+        row.addStretch()
+        self.set_active_mode("quick")
+
+    def _on_toggled(self, key, checked):
+        if checked:
+            self.current_mode = key
+            self._restyle()
+            self.mode_selected.emit(key)
+
+    def set_active_mode(self, key):
+        self._buttons[key].blockSignals(True)
+        self._buttons[key].setChecked(True)
+        self._buttons[key].blockSignals(False)
+        self.current_mode = key
+        self._restyle()
+
+    def _restyle(self):
+        for key, radio in self._buttons.items():
+            active = key == self.current_mode
+            color = MODE_ACTIVE_TEXT if active else MODE_INACTIVE_TEXT
+            weight = "600" if active else "400"
+            radio.setStyleSheet(f"""
+                QRadioButton {{ color: {color}; font-weight: {weight}; font-size: 12px; spacing: 6px; }}
+                QRadioButton::indicator {{
+                    width: 13px; height: 13px; border-radius: 7px;
+                    border: 1px solid {theme.CYBER_BORDER_STRONG};
+                    background: {theme.CYBER_BG_INSET};
+                }}
+                QRadioButton::indicator:checked {{
+                    border: 1px solid {TREE_ACCENT};
+                    background: {TREE_ACCENT};
+                }}
+            """)
+
+
+class ScanTreeWidget(QWidget):
+    """
+    The checkbox tree box only (no mode radios - see ScanModeRow, a
+    separate sibling widget the Scan page wires to apply_mode() below, so
+    the page can lay the two out exactly like the reference: the mode row
+    full-width above, the tree box and the Scan button side by side below
+    it). `tree_spec` is built once (via build_tree_spec()) and passed in -
+    this widget owns no knowledge of where drive items come from, only how
+    to render/toggle a flat list of {id, text, indent, parent, group?} rows.
+    """
+
+    selection_changed = Signal()
+
+    def __init__(self, tree_spec, parent=None):
+        super().__init__(parent)
+        self.tree_spec = tree_spec
+        self.mode_checks = default_mode_checks(tree_spec)
+        self.children_of = {}
+        for item in tree_spec:
+            if item["parent"] is not None:
+                self.children_of.setdefault(item["parent"], []).append(item["id"])
+
+        self.state = {item["id"]: False for item in tree_spec}
+        self.expanded = {item["id"]: True for item in tree_spec if item.get("group")}
+        self.current_mode = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.tree_scroll = QScrollArea()
+        self.tree_scroll.setWidgetResizable(True)
+        self.tree_scroll.setObjectName("scanTreeBox")
+        self.tree_scroll.setFixedHeight(260)
+        tree_body = QWidget()
+        tree_body.setObjectName("scanTreeBody")
+        self.tree_layout = QVBoxLayout(tree_body)
+        self.tree_layout.setContentsMargins(14, 12, 14, 12)
+        self.tree_layout.setSpacing(2)
+        self.tree_scroll.setWidget(tree_body)
+        outer.addWidget(self.tree_scroll)
+
+        self.tree_scroll.setStyleSheet(f"""
+            #scanTreeBox {{
+                border-radius: {theme.RADIUS_CARD}px;
+                border: 1px solid {theme.CYBER_BORDER_DEFAULT};
+                background: {theme.GRADIENT_NEUTRAL_CARD};
+            }}
+            #scanTreeBody {{ background: transparent; }}
+        """)
+
+        self._rows = {}
+        for item in tree_spec:
+            row = _TreeRow(item, self._on_checkbox_toggled, self._on_arrow_clicked)
+            self._rows[item["id"]] = row
+            self.tree_layout.addWidget(row)
+        self.tree_layout.addStretch()
+
+        self.apply_mode("quick")
+
+    # ------------------------------------------------------------------
+    def apply_mode(self, mode):
+        self.current_mode = mode
+        checked_ids = set(self.mode_checks[mode])
+        for item_id in self.state:
+            self.state[item_id] = item_id in checked_ids
+        self._render_rows()
+        self.selection_changed.emit()
+
+    def checked_ids(self):
+        return [item_id for item_id, checked in self.state.items() if checked]
+
+    def is_checked(self, item_id):
+        return bool(self.state.get(item_id))
+
+    def any_checked(self, item_ids):
+        return any(self.state.get(i) for i in item_ids)
+
+    # ------------------------------------------------------------------
+    def _on_checkbox_toggled(self, item_id, checked):
+        if self.state.get(item_id) == checked:
+            return
+        self.state[item_id] = checked
+        if item_id in self.children_of:  # a group checkbox - cascade to children
+            for child_id in self.children_of[item_id]:
+                self.state[child_id] = checked
+        self._render_rows()
+        self.selection_changed.emit()
+
+    def _on_arrow_clicked(self, group_id):
+        self.expanded[group_id] = not self.expanded[group_id]
+        self._render_rows()
+
+    def _render_rows(self):
+        for item in self.tree_spec:
+            row = self._rows[item["id"]]
+            parent = item["parent"]
+            visible = parent is None or self.expanded.get(parent, True)
+            row.setVisible(visible)
+            row.set_checked_silently(self.state[item["id"]])
+            if item.get("group"):
+                row.set_arrow_expanded(self.expanded.get(item["id"], True))
+
+
+========== FILE: devadara_gui/pages/protection.py ==========
+
+"""
+protection.py
+
+The Protection page (Section 5): five module cards, each backed by a real
+monitor in devadara_gui.services.app_state. Toggling a card starts/stops
+the actual devadara/ watcher (behavior_monitor, downloads_monitor,
+usb_monitor) or edits the real Windows Registry Run key
+(devadara.startup_registration), never a fake/demo flag.
+"""
+
+from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
+
+from devadara_gui import theme
+from devadara_gui.components import ModuleCard, page_title
+
+
+class ProtectionPage(theme.PageCanvas):
+    def __init__(self, app_state, parent=None):
+        super().__init__(parent)
+        self.app_state = app_state
+        self.setObjectName("pageRoot")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING)
+        layout.setSpacing(theme.CARD_GAP)
+        layout.addWidget(page_title("Protection"))
+
+        self.master_card = ModuleCard(
+            "Real-Time Protection",
+            "Monitors files and system activity for suspicious behavior.",
+            initial_state=app_state.is_realtime_protection_enabled(),
+        )
+        self.master_card.toggled.connect(self._on_master_toggled)
+        layout.addWidget(self.master_card)
+
+        self.behavior_card = ModuleCard(
+            "Behavior Monitoring",
+            "Watches your Downloads folder for ransomware-like bursts of file activity.",
+            initial_state=app_state.is_module_enabled("behavior_monitoring"),
+        )
+        self.behavior_card.toggled.connect(lambda checked: self._on_module_toggled("behavior_monitoring", checked))
+        layout.addWidget(self.behavior_card)
+
+        self.downloads_card = ModuleCard(
+            "Downloads Auto-Scan",
+            "Automatically scans every new file that finishes arriving in Downloads.",
+            initial_state=app_state.is_module_enabled("downloads_autoscan"),
+        )
+        self.downloads_card.toggled.connect(lambda checked: self._on_module_toggled("downloads_autoscan", checked))
+        layout.addWidget(self.downloads_card)
+
+        self.usb_card = ModuleCard(
+            "USB Auto-Scan",
+            "Automatically scans removable drives the moment they're connected.",
+            initial_state=app_state.is_module_enabled("usb_autoscan"),
+        )
+        self.usb_card.toggled.connect(lambda checked: self._on_module_toggled("usb_autoscan", checked))
+        layout.addWidget(self.usb_card)
+
+        self.startup_card = ModuleCard(
+            "Windows Startup",
+            "Start DEVADARA automatically when Windows starts.",
+            initial_state=app_state.is_startup_enabled(),
+        )
+        self.startup_card.toggled.connect(self._on_startup_toggled)
+        layout.addWidget(self.startup_card)
+
+        layout.addStretch()
+
+        self.app_state.protection_changed.connect(self._sync_from_state)
+
+    def _on_master_toggled(self, checked):
+        self.app_state.set_realtime_protection(checked)
+
+    def _on_module_toggled(self, key, checked):
+        self.app_state.set_module_enabled(key, checked)
+
+    def _on_startup_toggled(self, checked):
+        self.app_state.set_startup_enabled(checked)
+
+    def _sync_from_state(self):
+        self.master_card.set_checked_silently(self.app_state.is_realtime_protection_enabled())
+        self.behavior_card.set_checked_silently(self.app_state.is_module_enabled("behavior_monitoring"))
+        self.downloads_card.set_checked_silently(self.app_state.is_module_enabled("downloads_autoscan"))
+        self.usb_card.set_checked_silently(self.app_state.is_module_enabled("usb_autoscan"))
+
+
+========== FILE: devadara_gui/pages/threats.py ==========
+
+"""
+threats.py
+
+The Threats page (Section 6): Detected Threats (backed by
+devadara/scan_log.py via app_state) and Quarantine (backed by
+devadara/quarantine.py via app_state) tabs, plus a slide-over Threat
+Details panel (Section 6.3).
+"""
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QPushButton,
+    QScrollArea,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from devadara_gui import theme
+from devadara_gui.components import (
+    Card,
+    EmptyState,
+    ThreatCard,
+    body_secondary,
+    format_timestamp,
+    key_value_list,
+    page_title,
+)
+from devadara_gui.dialogs import ConfirmationDialog
+from devadara_gui.slide_over import SlideOverPanel
+
+_ML_GLOSS = "How confident the local machine-learning model is that this file's structure resembles malware."
+_YARA_GLOSS = "Matched a known pattern used by malicious software."
+_SIG_GLOSS = "Whether Windows could verify this file was signed by a trusted software publisher."
+
+
+class ThreatsPage(theme.PageCanvas):
+    def __init__(self, app_state, parent=None):
+        super().__init__(parent)
+        self.app_state = app_state
+        self.setObjectName("pageRoot")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING)
+        outer.setSpacing(theme.CARD_GAP)
+        outer.addWidget(page_title("Threats"))
+
+        self.tabs = QTabWidget()
+        outer.addWidget(self.tabs)
+
+        self.detected_scroll = QScrollArea()
+        self.detected_scroll.setWidgetResizable(True)
+        self.detected_body = QWidget()
+        self.detected_layout = QVBoxLayout(self.detected_body)
+        self.detected_layout.setSpacing(12)
+        self.detected_scroll.setWidget(self.detected_body)
+        self.tabs.addTab(self.detected_scroll, "Detected Threats")
+
+        self.quarantine_scroll = QScrollArea()
+        self.quarantine_scroll.setWidgetResizable(True)
+        self.quarantine_body = QWidget()
+        self.quarantine_layout = QVBoxLayout(self.quarantine_body)
+        self.quarantine_layout.setSpacing(12)
+        self.quarantine_scroll.setWidget(self.quarantine_body)
+        self.tabs.addTab(self.quarantine_scroll, "Quarantine")
+
+        self.detail_panel = SlideOverPanel(self)
+        self.detail_panel.hide()
+
+        self.app_state.findings_changed.connect(self.refresh_detected)
+        self.app_state.quarantine_changed.connect(self.refresh_quarantine)
+
+        self.refresh_detected()
+        self.refresh_quarantine()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.detail_panel.isVisible():
+            self.detail_panel.reposition(self.size())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_detected()
+        self.refresh_quarantine()
+
+    def open_detected_tab(self):
+        self.tabs.setCurrentIndex(0)
+
+    # ------------------------------------------------------------------
+    def _clear(self, layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+    def refresh_detected(self):
+        self._clear(self.detected_layout)
+        findings = self.app_state.list_detected_threats()
+
+        if not findings:
+            empty = EmptyState("No threats detected", "DEVADARA hasn't detected any threats on this PC.")
+            empty.setMinimumHeight(300)
+            self.detected_layout.addWidget(empty)
+            return
+
+        for finding in findings:
+            file_path = finding.get("file_path") or "(unknown file)"
+            name = file_path.split("\\")[-1] if "\\" in file_path else file_path
+            card = ThreatCard(name, file_path, format_timestamp(finding.get("timestamp", "")))
+            card.quarantine_clicked.connect(lambda f=finding: self._quarantine(f))
+            card.delete_clicked.connect(lambda f=finding: self._delete(f))
+            card.ignore_clicked.connect(lambda f=finding: self._ignore(f))
+            card.details_clicked.connect(lambda f=finding: self._show_details(f))
+            self.detected_layout.addWidget(card)
+        self.detected_layout.addStretch()
+
+    def _quarantine(self, finding):
+        self.app_state.quarantine_finding(finding["id"])
+
+    def _delete(self, finding):
+        name = (finding.get("file_path") or "this file").split("\\")[-1]
+        if ConfirmationDialog.confirm(
+            self, "Delete this file?",
+            f"'{name}' will be permanently deleted from your PC. This cannot be undone.",
+            confirm_label="Delete", destructive=True,
+        ):
+            self.app_state.delete_finding(finding["id"])
+
+    def _ignore(self, finding):
+        name = (finding.get("file_path") or "this file").split("\\")[-1]
+        if ConfirmationDialog.confirm(
+            self, "Ignore this file?",
+            f"Add an exception for '{name}'? DEVADARA won't flag it again.",
+            confirm_label="Add Exception",
+        ):
+            self.app_state.ignore_finding(finding["id"])
+
+    def _show_details(self, finding):
+        details = finding.get("details") or {}
+        file_path = finding.get("file_path") or "(unknown)"
+        name = file_path.split("\\")[-1] if "\\" in file_path else file_path
+
+        rows = [("File", name)]
+        if finding.get("hash"):
+            rows.append(("SHA256", finding["hash"][:20] + "..."))
+
+        tier = finding.get("tier")
+        if tier == "known_bad":
+            rows.append(("Detection method", "Known-threat hash match"))
+        elif details.get("yara"):
+            rows.append(("YARA result", "Match: " + ", ".join(details["yara"]), _YARA_GLOSS))
+        if details.get("confidence") is not None:
+            rows.append(("ML classification", f"{details['confidence']:.0%} confidence", _ML_GLOSS))
+        publisher = details.get("publisher")
+        rows.append(("Digital signature", publisher if publisher else "Not signed", _SIG_GLOSS))
+        rows.append(("File location", file_path))
+        rows.append(("Detection time", format_timestamp(finding.get("timestamp", ""))))
+        rows.append(("Source", finding.get("source", "")))
+
+        self.detail_panel.set_title(name)
+        self.detail_panel.clear_body()
+        self.detail_panel.add_widget(key_value_list(rows))
+
+        actions = QHBoxLayout()
+        quarantine_btn = QPushButton("Quarantine")
+        quarantine_btn.setObjectName("primaryButton")
+        quarantine_btn.setCursor(Qt.PointingHandCursor)
+        quarantine_btn.clicked.connect(lambda: (self._quarantine(finding), self.detail_panel.hide()))
+        theme.apply_glow(quarantine_btn, theme.CYBER_GLOW_NEON, blur=18, alpha=130)
+        actions.addWidget(quarantine_btn)
+        delete_btn = QPushButton("Delete")
+        delete_btn.setObjectName("secondaryButton")
+        delete_btn.setCursor(Qt.PointingHandCursor)
+        delete_btn.clicked.connect(lambda: (self._delete(finding), self.detail_panel.hide()))
+        actions.addWidget(delete_btn)
+        actions_widget = QWidget()
+        actions_widget.setObjectName("transparentPanel")
+        actions_widget.setLayout(actions)
+        self.detail_panel.add_widget(actions_widget)
+
+        self.detail_panel.reposition(self.size())
+        self.detail_panel.open()
+
+    # ------------------------------------------------------------------
+    def refresh_quarantine(self):
+        self._clear(self.quarantine_layout)
+        entries = self.app_state.list_quarantine()
+
+        if not entries:
+            empty = EmptyState("Quarantine is empty", "No files are currently isolated by DEVADARA.")
+            empty.setMinimumHeight(300)
+            self.quarantine_layout.addWidget(empty)
+            return
+
+        note = body_secondary(
+            "Items securely isolated by DEVADARA - quarantined files are isolated from the "
+            "rest of your system and cannot run normally.",
+            wrap=True,
+        )
+        self.quarantine_layout.addWidget(note)
+
+        for entry in entries:
+            card = Card()
+            original_path = entry.get("original_path") or ""
+            name = original_path.split("\\")[-1] if "\\" in original_path else original_path
+            folder = "\\".join(original_path.split("\\")[:-1]) if "\\" in original_path else "-"
+
+            name_label = body_secondary(name)
+            name_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
+            card.addWidget(name_label)
+            card.addWidget(body_secondary(f"Original location: {folder}"))
+            card.addWidget(body_secondary(f"Date: {format_timestamp(entry.get('quarantined_at', ''))}"))
+
+            actions = QHBoxLayout()
+            restore_btn = QPushButton("Restore")
+            restore_btn.setObjectName("secondaryButton")
+            restore_btn.setCursor(Qt.PointingHandCursor)
+            restore_btn.clicked.connect(lambda e=entry: self._restore(e))
+            actions.addWidget(restore_btn)
+
+            delete_btn = QPushButton("Delete Permanently")
+            delete_btn.setObjectName("secondaryButton")
+            delete_btn.setCursor(Qt.PointingHandCursor)
+            delete_btn.clicked.connect(lambda e=entry: self._delete_quarantined(e))
+            actions.addWidget(delete_btn)
+            actions.addStretch()
+            card.addLayout(actions)
+
+            self.quarantine_layout.addWidget(card)
+        self.quarantine_layout.addStretch()
+
+    def _restore(self, entry):
+        self.app_state.restore_quarantine(entry["id"])
+
+    def _delete_quarantined(self, entry):
+        name = (entry.get("original_path") or "this file").split("\\")[-1]
+        if ConfirmationDialog.confirm(
+            self, "Delete permanently?",
+            f"'{name}' will be permanently erased. This cannot be undone.",
+            confirm_label="Delete Permanently", destructive=True,
+        ):
+            self.app_state.delete_quarantine_permanently(entry["id"])
+
+
+========== FILE: devadara_gui/pages/settings_page.py ==========
+
+"""
+settings_page.py
+
+The Settings page (Section 9): its own left-hand sub-navigation, five
+sections. Protection toggles here stay synchronized with the standalone
+Protection page (both read/write the same devadara_gui.services.app_state)
+- there is only ever one real state, never two independent copies.
+"""
+
+import os
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QPushButton,
+    QScrollArea,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from devadara_gui import theme
+from devadara_gui.components import (
+    Card,
+    ModuleCard,
+    body_secondary,
+    body_text,
+    hairline,
+    make_label,
+    page_title,
+    section_title,
+    toggle_row,
+)
+from devadara_gui.dialogs import ConfirmationDialog
+from devadara_gui.icons import icon_label
+
+SECTIONS = ["General", "Protection", "Exceptions", "Notifications", "About"]
+
+
+class SettingsNavButton(QPushButton):
+    def __init__(self, text, parent=None):
+        super().__init__(text, parent)
+        self.setCheckable(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self._apply_style(False)
+
+    def _apply_style(self, active):
+        color = theme.CYBER_TEXT_PRIMARY if active else theme.CYBER_TEXT_SECONDARY
+        border = f"border-left: 2px solid {theme.CYBER_NEON};" if active else "border-left: 2px solid transparent;"
+        weight = "600" if active else "500"
+        self.setStyleSheet(
+            f"QPushButton {{ background: transparent; border: none; {border} text-align: left; "
+            f"padding: 10px 14px; color: {color}; font-size: 13px; font-weight: {weight}; }}"
+            f"QPushButton:hover {{ color: {theme.CYBER_TEXT_PRIMARY}; }}"
+        )
+
+    def setChecked(self, checked):
+        super().setChecked(checked)
+        self._apply_style(checked)
+
+
+class SettingsPage(theme.PageCanvas):
+    def __init__(self, app_state, parent=None):
+        super().__init__(parent)
+        self.app_state = app_state
+        self.setObjectName("pageRoot")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING, theme.PAGE_PADDING)
+        outer.setSpacing(theme.CARD_GAP)
+        outer.addWidget(page_title("Settings"))
+
+        body_row = QHBoxLayout()
+        body_row.setSpacing(24)
+        outer.addLayout(body_row, 1)
+
+        nav_col = QVBoxLayout()
+        nav_col.setSpacing(2)
+        nav_widget = QWidget()
+        nav_widget.setFixedWidth(180)
+        nav_widget.setLayout(nav_col)
+        body_row.addWidget(nav_widget)
+
+        self.stack = QStackedWidget()
+        body_row.addWidget(self.stack, 1)
+
+        self.nav_buttons = []
+        pages = [
+            self._build_general(), self._build_protection(), self._build_exceptions(),
+            self._build_notifications(), self._build_about(),
+        ]
+        for label, page in zip(SECTIONS, pages):
+            btn = SettingsNavButton(label)
+            btn.clicked.connect(lambda _checked=False, p=page, b=None: self._select(p))
+            nav_col.addWidget(btn)
+            self.nav_buttons.append(btn)
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(page)
+            self.stack.addWidget(scroll)
+        nav_col.addStretch()
+
+        self.nav_buttons[0].setChecked(True)
+        self.stack.setCurrentIndex(0)
+
+        self.app_state.protection_changed.connect(self._sync_protection_toggles)
+
+    def _select(self, page):
+        index = None
+        for i in range(self.stack.count()):
+            if self.stack.widget(i).widget() is page:
+                index = i
+        if index is None:
+            return
+        self.stack.setCurrentIndex(index)
+        for i, btn in enumerate(self.nav_buttons):
+            btn.setChecked(i == index)
+
+    # ------------------------------------------------------------------
+    def _page_container(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(theme.CARD_GAP)
+        layout.setContentsMargins(0, 0, 0, 0)
+        return widget, layout
+
+    def _build_general(self):
+        widget, layout = self._page_container()
+        card = Card()
+        row, self.startup_toggle = toggle_row("Start DEVADARA with Windows")
+        self.startup_toggle.setChecked(self.app_state.is_startup_enabled())
+        self.startup_toggle.toggled.connect(self.app_state.set_startup_enabled)
+        card.addWidget(row)
+        card.addWidget(hairline())
+
+        row, self.tray_toggle = toggle_row("Minimize to system tray")
+        self.tray_toggle.setChecked(self.app_state.config.get("minimize_to_tray", False))
+        self.tray_toggle.toggled.connect(lambda v: self.app_state.config.set("minimize_to_tray", v))
+        card.addWidget(row)
+        card.addWidget(hairline())
+
+        row, self.notifications_master_toggle = toggle_row("Notifications")
+        self.notifications_master_toggle.setChecked(self.app_state.config.get("notifications_enabled", True))
+        self.notifications_master_toggle.toggled.connect(lambda v: self.app_state.config.set("notifications_enabled", v))
+        card.addWidget(row)
+
+        layout.addWidget(card)
+        layout.addStretch()
+        return widget
+
+    def _build_protection(self):
+        widget, layout = self._page_container()
+        self.settings_master_card = ModuleCard(
+            "Real-Time Protection", "Monitors files and system activity for suspicious behavior.",
+            initial_state=self.app_state.is_realtime_protection_enabled(), show_status=False,
+        )
+        self.settings_master_card.toggled.connect(self.app_state.set_realtime_protection)
+        layout.addWidget(self.settings_master_card)
+
+        self.settings_behavior_card = ModuleCard(
+            "Behavior Monitoring", "Watches Downloads for ransomware-like bursts of activity.",
+            initial_state=self.app_state.is_module_enabled("behavior_monitoring"), show_status=False,
+        )
+        self.settings_behavior_card.toggled.connect(lambda v: self.app_state.set_module_enabled("behavior_monitoring", v))
+        layout.addWidget(self.settings_behavior_card)
+
+        self.settings_downloads_card = ModuleCard(
+            "Downloads Auto-Scan", "Automatically scans every new file in Downloads.",
+            initial_state=self.app_state.is_module_enabled("downloads_autoscan"), show_status=False,
+        )
+        self.settings_downloads_card.toggled.connect(lambda v: self.app_state.set_module_enabled("downloads_autoscan", v))
+        layout.addWidget(self.settings_downloads_card)
+
+        self.settings_usb_card = ModuleCard(
+            "USB Auto-Scan", "Automatically scans removable drives when connected.",
+            initial_state=self.app_state.is_module_enabled("usb_autoscan"), show_status=False,
+        )
+        self.settings_usb_card.toggled.connect(lambda v: self.app_state.set_module_enabled("usb_autoscan", v))
+        layout.addWidget(self.settings_usb_card)
+
+        layout.addStretch()
+        return widget
+
+    def _sync_protection_toggles(self):
+        self.settings_master_card.set_checked_silently(self.app_state.is_realtime_protection_enabled())
+        self.settings_behavior_card.set_checked_silently(self.app_state.is_module_enabled("behavior_monitoring"))
+        self.settings_downloads_card.set_checked_silently(self.app_state.is_module_enabled("downloads_autoscan"))
+        self.settings_usb_card.set_checked_silently(self.app_state.is_module_enabled("usb_autoscan"))
+        self.startup_toggle.blockSignals(True)
+        self.startup_toggle.setChecked(self.app_state.is_startup_enabled())
+        self.startup_toggle.blockSignals(False)
+
+    def _build_exceptions(self):
+        widget, layout = self._page_container()
+        card = Card()
+        card.addWidget(section_title("Excluded locations"))
+        self.exceptions_list_layout = QVBoxLayout()
+        card.addLayout(self.exceptions_list_layout)
+
+        add_row = QHBoxLayout()
+        add_btn = QPushButton("+ Add Exception")
+        add_btn.setObjectName("secondaryButton")
+        add_btn.setCursor(Qt.PointingHandCursor)
+        add_btn.clicked.connect(self._add_exception)
+        add_row.addWidget(add_btn)
+        add_row.addStretch()
+        card.addLayout(add_row)
+
+        layout.addWidget(card)
+        layout.addStretch()
+        self._refresh_exceptions()
+        return widget
+
+    def _refresh_exceptions(self):
+        while self.exceptions_list_layout.count():
+            item = self.exceptions_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        paths = self.app_state.list_exceptions()
+        if not paths:
+            note = make_label(
+                "No exceptions added - files and folders you exclude from scanning will appear here.",
+                "metadataDisabled",
+            )
+            note.setWordWrap(True)
+            self.exceptions_list_layout.addWidget(note)
+            return
+
+        for path in paths:
+            row = QHBoxLayout()
+            label = body_text(path, wrap=True)
+            row.addWidget(label, 1)
+            remove_btn = QPushButton("Remove")
+            remove_btn.setObjectName("textButton")
+            remove_btn.setCursor(Qt.PointingHandCursor)
+            remove_btn.clicked.connect(lambda _checked=False, p=path: self._remove_exception(p))
+            row.addWidget(remove_btn)
+            row_widget = QWidget()
+            row_widget.setObjectName("transparentPanel")
+            row_widget.setLayout(row)
+            self.exceptions_list_layout.addWidget(row_widget)
+            self.exceptions_list_layout.addWidget(hairline())
+
+    def _add_exception(self):
+        path = QFileDialog.getExistingDirectory(self, "Add Folder Exception")
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Add File Exception")
+        if path:
+            self.app_state.add_exception_path(path)
+            self._refresh_exceptions()
+
+    def _remove_exception(self, path):
+        if ConfirmationDialog.confirm(
+            self, "Remove this exception?",
+            f"DEVADARA will resume scanning '{path}'.",
+            confirm_label="Remove",
+        ):
+            self.app_state.remove_exception_path(path)
+            self._refresh_exceptions()
+
+    def _build_notifications(self):
+        widget, layout = self._page_container()
+        card = Card()
+        specs = [
+            ("Scan completed", "notify_scan_completed"),
+            ("Threat detected", "notify_threat_detected"),
+            ("USB scan completed", "notify_usb_scan_completed"),
+            ("Protection status changes", "notify_protection_status"),
+        ]
+        for index, (label, key) in enumerate(specs):
+            row, switch = toggle_row(label)
+            switch.setChecked(self.app_state.config.get(key, True))
+            switch.toggled.connect(lambda v, k=key: self.app_state.config.set(k, v))
+            card.addWidget(row)
+            if index < len(specs) - 1:
+                card.addWidget(hairline())
+        layout.addWidget(card)
+        layout.addStretch()
+        return widget
+
+    def _build_about(self):
+        # Unlike every other Settings sub-tab (General/Protection/Exceptions/
+        # Notifications all wrap their content in a Card()), this content
+        # used to be added directly to the bare page container - no card at
+        # all, so there was nothing to paint the gradient/border background
+        # every other sub-tab has. Wrapped in a Card() here to match.
+        widget, layout = self._page_container()
+        card = Card()
+        card.layout_.setAlignment(Qt.AlignTop)
+
+        logo_row = QHBoxLayout()
+        logo_row.addStretch()
+        logo_row.addWidget(icon_label("logo", size=40, color=theme.CYBER_NEON))
+        logo_row.addStretch()
+        card.addLayout(logo_row)
+
+        name = make_label("DEVADARA", "sectionTitle")
+        name.setAlignment(Qt.AlignCenter)
+        name.setStyleSheet(f"font-size: 20px; font-weight: 700; color: {theme.CYBER_TEXT_PRIMARY};")
+        card.addWidget(name)
+
+        version = make_label("Version 1.0.0", "metadataText")
+        version.setAlignment(Qt.AlignCenter)
+        card.addWidget(version)
+
+        desc = body_secondary(
+            "Local, offline security. All scanning and detection happens on this device - "
+            "nothing is sent externally.", wrap=True,
+        )
+        desc.setAlignment(Qt.AlignCenter)
+        card.addWidget(desc)
+
+        engines = body_secondary(
+            "Detection engines: SHA256 Hash Matching, YARA Rules, Local ML Classification, "
+            "Digital Signature Verification, Behavior Monitoring.", wrap=True,
+        )
+        engines.setAlignment(Qt.AlignCenter)
+        card.addWidget(engines)
+
+        layout.addWidget(card)
+        layout.addStretch()
+        return widget
+

@@ -94,7 +94,7 @@ class QuickActionCard(QWidget):
     # #B9FFDA and its label is #F2FFF7; the other three cards' icon is
     # #7AA98C and their label is #C7E3D3 - two genuinely distinct tiers,
     # not one shared default recolored on hover.
-    _ICON_HOVER_COLOR = theme.NAV_ACTIVE_ICON
+    _ICON_HOVER_COLOR = theme.CYBER_NEON
 
     def __init__(self, icon_name, label, primary=False, disabled=False, caption=None, parent=None):
         super().__init__(parent)
@@ -119,24 +119,24 @@ class QuickActionCard(QWidget):
             self.setObjectName("quickActionCardPrimary")
             # box-shadow 0 0 18px rgba(60,220,140,0.25) - Quick Scan card's
             # exact glow.
-            theme.apply_glow(self, theme.PRIMARY_SCAN_GLOW, blur=18)
+            theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=18)
         else:
             self.setObjectName("quickActionCard")
         self.setCursor(Qt.PointingHandCursor if not disabled else Qt.ArrowCursor)
         self.setFixedHeight(100)
         self._disabled = disabled
         self._primary = primary
-        self._icon_default_color = theme.PRIMARY_SCAN_ICON if primary else theme.SCAN_CARD_ICON
+        self._icon_default_color = theme.PRIMARY_SCAN_ICON if primary else theme.CYBER_TEXT_SECONDARY
 
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(6)
 
-        icon_color = theme.TEXT_DISABLED if disabled else self._icon_default_color
+        icon_color = theme.CYBER_TEXT_MUTE if disabled else self._icon_default_color
         self._icon_widget = icon_label(icon_name, size=20, color=icon_color)
         layout.addWidget(self._icon_widget, alignment=Qt.AlignHCenter)
 
-        text_color = theme.TEXT_DISABLED if disabled else (theme.TEXT_PRIMARY if primary else theme.SCAN_CARD_LABEL)
+        text_color = theme.CYBER_TEXT_MUTE if disabled else (theme.CYBER_TEXT_PRIMARY if primary else theme.CYBER_TEXT_SECONDARY)
         text = make_label(label, "bodyText")
         text.setStyleSheet(f"font-size: 11px; font-weight: 500; color: {text_color};")
         text.setAlignment(Qt.AlignCenter)
@@ -155,7 +155,7 @@ class QuickActionCard(QWidget):
     def enterEvent(self, event):
         if not self._disabled:
             self._icon_widget.setStyleSheet(icon_style(self._ICON_HOVER_COLOR))
-            theme.apply_glow(self._icon_widget, theme.NAV_ACTIVE_ICON, blur=10, alpha=150)
+            theme.apply_glow(self._icon_widget, theme.CYBER_NEON, blur=10, alpha=150)
         super().enterEvent(event)
 
     def leaveEvent(self, event):
@@ -193,7 +193,7 @@ class DashboardPage(theme.PageCanvas):
         self.layout_.addWidget(page_title("Dashboard"))
 
         self.hero_card = Card(object_name="heroCard", padding=22, glow=True,
-                              glow_color=theme.HERO_GLOW, glow_blur=30)
+                              glow_color=theme.CYBER_GLOW_SOFT, glow_blur=30)
         self.layout_.addWidget(self.hero_card)
 
         quick_actions_row = QHBoxLayout()
@@ -218,7 +218,7 @@ class DashboardPage(theme.PageCanvas):
         activity_header.addStretch()
         self._view_all_btn = QPushButton("View All")
         self._view_all_btn.setObjectName("textButton")
-        self._view_all_btn.setStyleSheet(f"color: {theme.ACCENT_GREEN};")
+        self._view_all_btn.setStyleSheet(f"color: {theme.CYBER_NEON};")
         self._view_all_btn.setCursor(Qt.PointingHandCursor)
         self._view_all_btn.hide()
         activity_header.addWidget(self._view_all_btn)
@@ -276,13 +276,13 @@ class DashboardPage(theme.PageCanvas):
             heading_row.addWidget(StatusDot("active", glow=True))
             # Exact reference values: hero heading 17px/600/#F2FFF7.
             heading = make_label("Your PC is protected", "displayText")
-            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.HERO_HEADING_COLOR};")
+            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
             heading_row.addWidget(heading)
             heading_row.addStretch()
             heading_row.addWidget(self._hero_accent_dot())
             self.hero_card.addLayout(heading_row)
             subtext = body_secondary("Real-time protection is active")
-            subtext.setStyleSheet(f"font-size: 12px; color: {theme.HERO_SUBTEXT_COLOR};")
+            subtext.setStyleSheet(f"font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};")
             self.hero_card.addWidget(subtext)
 
             self.hero_card.addWidget(hairline())
@@ -302,20 +302,20 @@ class DashboardPage(theme.PageCanvas):
             heading_row.setSpacing(10)
             heading_row.addWidget(StatusDot("attention", glow=True))
             heading = make_label("Protection is disabled", "displayText")
-            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.HERO_HEADING_COLOR};")
+            heading.setStyleSheet(f"font-size: 17px; font-weight: 600; color: {theme.CYBER_TEXT_PRIMARY};")
             heading_row.addWidget(heading)
             heading_row.addStretch()
             heading_row.addWidget(self._hero_accent_dot())
             self.hero_card.addLayout(heading_row)
             subtext = body_secondary("Real-time protection is currently turned off.")
-            subtext.setStyleSheet(f"font-size: 12px; color: {theme.HERO_SUBTEXT_COLOR};")
+            subtext.setStyleSheet(f"font-size: 12px; color: {theme.CYBER_TEXT_SECONDARY};")
             self.hero_card.addWidget(subtext)
 
             btn = QPushButton("Turn On Protection")
             btn.setObjectName("primaryButton")
             btn.setCursor(Qt.PointingHandCursor)
             btn.clicked.connect(lambda: self.app_state.set_realtime_protection(True))
-            theme.apply_glow(btn, theme.ACCENT_GREEN, blur=20, alpha=130)
+            theme.apply_glow(btn, theme.CYBER_GLOW_NEON, blur=20, alpha=130)
             row = QHBoxLayout()
             row.addWidget(btn)
             row.addStretch()
