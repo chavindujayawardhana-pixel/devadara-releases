@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (
 )
 
 from devadara_gui import theme
-from devadara_gui.components import NavItem
+from devadara_gui.components import NavItem, PageHeader
+from devadara_gui.dashboard_page import DashboardPage
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The processed (transparent-cornered) icon - used for both the window/
@@ -39,8 +40,10 @@ NAV_ITEMS = [
     ("⚙", "Settings"),    # ⚙
 ]
 
-PAGES = [
-    ("Dashboard", "// system_status: secured — welcome back, operator"),
+# Dashboard (index 0) has real content - see DashboardPage. The rest are
+# still placeholders; this list stays in NAV_ITEMS order starting from
+# index 1 so PLACEHOLDER_PAGES[i] lines up with NAV_ITEMS[i + 1].
+PLACEHOLDER_PAGES = [
     ("Scan", "// select scan mode or configure targets"),
     ("Protection", "// security modules — status and control"),
     ("Results", "// findings from last scan — click path to locate"),
@@ -205,35 +208,7 @@ class PagePlaceholder(QWidget):
         layout.setContentsMargins(40, 30, 40, 60)
         layout.setSpacing(0)
 
-        header = QHBoxLayout()
-        header.setSpacing(14)
-
-        accent = QFrame()
-        accent.setObjectName("pageAccentBar")
-        accent.setFixedWidth(3)
-        accent.setMinimumHeight(48)
-        accent.setMaximumHeight(48)
-        accent.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        header.addWidget(accent)
-
-        text_col = QVBoxLayout()
-        text_col.setSpacing(6)
-
-        title_label = QLabel(title.upper())
-        title_label.setObjectName("pageTitle")
-        title_label.setFont(theme.letter_spaced_font(size=18, black=True, spacing=4))
-        title_label.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=20))
-        text_col.addWidget(title_label)
-
-        sub_label = QLabel(subtitle)
-        sub_label.setObjectName("pageSub")
-        sub_label.setFont(theme.letter_spaced_font(size=8, spacing=1))
-        text_col.addWidget(sub_label)
-
-        header.addLayout(text_col)
-        header.addStretch(1)
-
-        layout.addLayout(header)
+        layout.addWidget(PageHeader(title, subtitle))
         layout.addStretch(1)
 
 
@@ -312,7 +287,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
-        for title, subtitle in PAGES:
+        self.stack.addWidget(DashboardPage(navigate=self.navigate_to))
+        for title, subtitle in PLACEHOLDER_PAGES:
             self.stack.addWidget(PagePlaceholder(title, subtitle))
         layout.addWidget(self.stack, 1)
 
@@ -322,3 +298,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.setMaximumSize(self.MAX_WIDTH, self.MAX_HEIGHT)
         self.resize(self.MAX_WIDTH, self.MAX_HEIGHT)
+
+    def navigate_to(self, index):
+        """Switch both the content stack and the sidebar's active nav item
+        to the given page index - used by DashboardPage's Quick Actions,
+        and any later phase's own in-page navigation shortcuts."""
+        self.sidebar.nav_items[index].setChecked(True)
+        self.stack.setCurrentIndex(index)

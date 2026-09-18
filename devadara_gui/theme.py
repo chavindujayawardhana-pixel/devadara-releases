@@ -31,6 +31,12 @@ TEXT_MUTE = "#3a5a4a"
 
 FONT_FAMILY = "Consolas"
 FONT_FALLBACKS = ["Consolas", "SF Mono", "Courier New"]
+# Icon glyphs (▣ ⌖ ◈ ▤ ⚙ ...) must always be requested in this font
+# specifically, everywhere in the app - Consolas has none of them, and
+# Windows' automatic fallback resolves some of them (confirmed: the ⚙ gear)
+# to a color-glyph font that ignores QPainter/QSS color entirely. This one
+# is confirmed to render all of them as plain, colorable outlines.
+ICON_FONT_FAMILY = "Segoe UI Symbol"
 
 # Qt QSS colors are "#AARRGGBB" (alpha first) - the opposite byte order from
 # CSS's "#RRGGBBAA" - so translucent tokens from the mockup are kept as
@@ -204,6 +210,62 @@ def build_stylesheet():
 
         QPushButton#themedButton[variant="primary"]:hover {{
             background: #00ffcc;
+        }}
+
+        /* ─── Hero status card ─── */
+        QFrame#heroCard {{
+            background: qlineargradient(
+                x1:0, y1:0, x2:1, y2:1,
+                stop:0 {rgba_css((0, 255, 170, 20))}, stop:1 {rgba_css((0, 229, 255, 10))}
+            );
+            border: 1px solid {NEON};
+            border-radius: 6px;
+        }}
+
+        QLabel#heroGreeting {{
+            color: {TEXT_DIM};
+        }}
+
+        QLabel#heroDesc {{
+            color: {TEXT_DIM};
+        }}
+
+        /* ─── Stat cards ─── */
+        QFrame#statCard {{
+            background: {rgba_css(PANEL_RGBA)};
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+        }}
+
+        QFrame#statCard:hover {{
+            border-color: {NEON};
+        }}
+
+        QLabel#statLabel {{
+            color: {TEXT_MUTE};
+        }}
+
+        /* ─── Action cards (Quick Actions) ─── */
+        QFrame#actionCard {{
+            background: {rgba_css(PANEL_RGBA)};
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+        }}
+
+        QFrame#actionCard:hover {{
+            border-color: {NEON};
+        }}
+
+        QLabel#actionIconBox {{
+            background: {rgba_css((0, 255, 170, 20))};
+            border: 1px solid {rgba_css((0, 255, 170, 51))};
+            border-radius: 4px;
+            color: {NEON};
+            font-family: "{ICON_FONT_FAMILY}";
+        }}
+
+        QLabel#actionTitle {{
+            color: {TEXT};
         }}
 
         /* ─── Page header ─── */
