@@ -27,15 +27,9 @@ from devadara_gui import theme
 from devadara_gui.components import NavItem
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The sidebar logo source file has been renamed on disk since Phase 1
-# (was assets/logo_eye.png.jpg, now assets/logo_eye.png (2).jpg - same
-# rounded-square-tile artwork, just re-saved under a new name). Sidebar
-# rendering is unchanged; only this path needed to follow the rename.
-LOGO_PATH = os.path.join(PROJECT_ROOT, "assets", "logo_eye.png (2).jpg")
-# Background-removed version of the same artwork (black rounded-square
-# backdrop stripped), used only for the window/taskbar icon - the sidebar
-# keeps using LOGO_PATH (the original tile) unchanged.
-APP_ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
+# The processed (transparent-cornered) icon - used for both the window/
+# taskbar icon and the sidebar logo, so the two are always identical.
+ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
 
 NAV_ITEMS = [
     ("▣", "Dashboard"),   # ▣
@@ -92,7 +86,7 @@ class Sidebar(QFrame):
 
         icon = QLabel()
         icon.setFixedSize(36, 36)
-        pixmap = QPixmap(LOGO_PATH)
+        pixmap = QPixmap(ICON_PATH)
         if not pixmap.isNull():
             pixmap = pixmap.scaled(
                 36, 36,
@@ -304,9 +298,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DEVADARA — Antivirus Guard")
-        icon_path = APP_ICON_PATH if os.path.exists(APP_ICON_PATH) else LOGO_PATH
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        if os.path.exists(ICON_PATH):
+            self.setWindowIcon(QIcon(ICON_PATH))
 
         self.setStyleSheet(theme.build_stylesheet())
 
