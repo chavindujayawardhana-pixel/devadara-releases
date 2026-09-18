@@ -1,8 +1,8 @@
 """
 main_window.py
 
-The application shell (Section 2): a fixed 240px sidebar (never collapses)
-plus a QStackedWidget content area, with a toast overlay on top. Sidebar
+The application shell: a fixed sidebar (never collapses) plus a
+QStackedWidget content area, with a toast overlay on top. Sidebar
 navigation and page wiring live here; each page only ever talks to the
 shared AppState, never to another page directly.
 """
@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -31,31 +32,39 @@ from devadara_gui.services.app_state import AppState
 from devadara_gui.services.realtime_scan import RealtimeScanController
 from devadara_gui.toast import ToastHost
 
+# Nav key, display label, icon glyph name.
+# "results" is the new name for the old "threats" page.
 NAV_ITEMS = [
-    ("dashboard", "Dashboard"),
-    ("scan", "Scan"),
-    ("protection", "Protection"),
-    ("threats", "Threats"),
-    ("settings", "Settings"),
+    ("dashboard", "Dashboard", "dashboard"),
+    ("scan", "Scan", "scan"),
+    ("protection", "Protection", "protection"),
+    ("results", "Results", "threats"),
+    ("settings", "Settings", "settings"),
 ]
 
 
 class NavButton(QPushButton):
+    """One sidebar navigation row: icon + label, checkable, with a glow
+    when active. Visual layer only — no logic lives here."""
+
     def __init__(self, icon_name, label, parent=None):
         super().__init__(parent)
         self.setObjectName("navRow")
         self.setCheckable(True)
         self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(44)
+        self.setFixedHeight(42)
         self._icon_name = icon_name
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(10)
+        layout.setContentsMargins(12, 0, 12, 0)
+        layout.setSpacing(12)
         self._icon = icon_label(icon_name, size=15, color=theme.CYBER_TEXT_SECONDARY)
         layout.addWidget(self._icon)
         self._label = make_label(label, "bodyText")
-        self._label.setStyleSheet(f"color: {theme.CYBER_TEXT_SECONDARY}; font-size: 12px; background: transparent;")
+        self._label.setStyleSheet(
+            f"color: {theme.CYBER_TEXT_SECONDARY}; font-size: 12px; "
+            f"letter-spacing: 1.5px; background: transparent; font-weight: 500;"
+        )
         layout.addWidget(self._label)
         layout.addStretch()
 
@@ -64,18 +73,19 @@ class NavButton(QPushButton):
         self.setProperty("active", "true" if checked else "false")
         self.style().unpolish(self)
         self.style().polish(self)
-        # Exact reference values: active nav text #EFFFF6, active icon
-        # #7CFFB2 - both distinct from the inactive #B7D9C4 / #7AA98C pair.
+
         label_color = theme.CYBER_NEON if checked else theme.CYBER_TEXT_SECONDARY
         icon_color = theme.CYBER_NEON if checked else theme.CYBER_TEXT_SECONDARY
+
         self._icon.setStyleSheet(icon_style(icon_color))
         self._label.setStyleSheet(
-            f"color: {label_color}; font-size: 12px; font-weight: {'600' if checked else '500'}; background: transparent;"
+            f"color: {label_color}; font-size: 12px; "
+            f"font-weight: {'700' if checked else '500'}; "
+            f"letter-spacing: 1.5px; background: transparent;"
         )
+
         if checked:
-            # box-shadow 0 0 12px rgba(60,220,140,0.25) - the reference's
-            # exact active-nav-item glow value.
-            theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=12)
+            theme.apply_glow(self, theme.CYBER_GLOW_NEON, blur=14, alpha=100)
         else:
             theme.clear_glow(self)
 
@@ -109,14 +119,14 @@ class MainWindow(QMainWindow):
         self.dashboard_page = DashboardPage(self.app_state)
         self.scan_page = ScanPage(self.app_state)
         self.protection_page = ProtectionPage(self.app_state)
-        self.threats_page = ThreatsPage(self.app_state)
+        self.results_page = ThreatsPage(self.app_state)  # class still ThreatsPage
         self.settings_page = SettingsPage(self.app_state)
 
         self.pages = {
             "dashboard": self.dashboard_page,
             "scan": self.scan_page,
             "protection": self.protection_page,
-            "threats": self.threats_page,
+            "results": self.results_page,
             "settings": self.settings_page,
         }
         for page in self.pages.values():
@@ -130,10 +140,6 @@ class MainWindow(QMainWindow):
         self.toast_host.raise_()
         self.app_state.toast_requested.connect(self.toast_host.show_toast)
 
-        # RealTimeScanPopup is a separate top-level window (near the screen's
-        # bottom-right corner, not confined to this window's bounds - see
-        # its own docstring for why), shared by both the Downloads watcher
-        # and USB auto-scan real-time triggers via AppState.realtime_scan_requested.
         self.realtime_popup = RealTimeScanPopup()
         self.realtime_scan_controller = RealtimeScanController(
             self.app_state, self.realtime_popup, on_review=self._on_realtime_review,
@@ -151,71 +157,116 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(theme.SIDEBAR_WIDTH)
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(12, 20, 12, 16)
+        layout.setContentsMargins(14, 20, 14, 16)
         layout.setSpacing(0)
 
-        # Logo mark + wordmark - reintroduced per the new reference file's
-        # exact spec (a prior design pass had removed this as a duplicate
-        # of the window titlebar's "DEVADARA" text; the new reference
-        # explicitly specifies this element's own gradient/glow, so it's
-        # back, superseding that earlier call).
-        logo_row = QHBoxLayout()
-        logo_row.setSpacing(8)
-        logo_row.setContentsMargins(8, 0, 0, 0)
-        logo_dot = QFrame()
-        logo_dot.setFixedSize(26, 26)
-        logo_dot.setStyleSheet(f"background: {theme.CYBER_NEON}; border-radius: 13px; border: none;")
-        theme.apply_glow(logo_dot, theme.CYBER_GLOW_NEON, blur=14)
-        logo_row.addWidget(logo_dot)
-        logo_row.addWidget(make_label("DEVADARA", "sidebarLogo"))
-        logo_row.addStretch()
+        # --- Logo block ---
         logo_wrap = QWidget()
         logo_wrap.setObjectName("transparentPanel")
-        logo_wrap.setLayout(logo_row)
-        logo_wrap.setContentsMargins(0, 0, 0, 24)
+        logo_row = QHBoxLayout(logo_wrap)
+        logo_row.setContentsMargins(8, 0, 8, 20)
+        logo_row.setSpacing(10)
+
+        logo_icon = icon_label("logo", size=22, color=theme.CYBER_NEON)
+        theme.apply_glow(logo_icon, theme.CYBER_GLOW_NEON, blur=14, alpha=180)
+        logo_row.addWidget(logo_icon)
+
+        wordmark_col = QVBoxLayout()
+        wordmark_col.setSpacing(3)
+        wordmark_col.setContentsMargins(0, 0, 0, 0)
+
+        wordmark = QLabel('DEVA<span style="color:#d4fff0;">DARA</span>')
+        wordmark.setTextFormat(Qt.RichText)
+        wordmark.setStyleSheet(
+            f"color: {theme.CYBER_NEON}; font-size: 14px; font-weight: 900; "
+            f"letter-spacing: 2px; background: transparent;"
+        )
+        wordmark_col.addWidget(wordmark)
+
+        tagline = make_label("// ANTIVIRUS v1.0", "metadataDisabled")
+        tagline.setStyleSheet(
+            f"color: {theme.CYBER_TEXT_MUTE}; font-size: 8px; "
+            f"letter-spacing: 2px; background: transparent;"
+        )
+        wordmark_col.addWidget(tagline)
+
+        logo_row.addLayout(wordmark_col)
+        logo_row.addStretch()
         layout.addWidget(logo_wrap)
 
+        # Divider under logo
+        logo_divider = QFrame()
+        logo_divider.setObjectName("sidebarDivider")
+        logo_divider.setFixedHeight(1)
+        layout.addWidget(logo_divider)
+        layout.addSpacing(10)
+
+        # --- Section label ---
+        section_label = make_label("// MAIN", "sidebarSectionLabel")
+        section_label.setStyleSheet(
+            f"color: {theme.CYBER_TEXT_MUTE}; font-size: 9px; font-weight: 700; "
+            f"letter-spacing: 2px; background: transparent; padding: 4px 8px;"
+        )
+        layout.addWidget(section_label)
+        layout.addSpacing(4)
+
+        # --- Nav items ---
         self.nav_buttons = {}
-        for key, label in NAV_ITEMS:
-            button = NavButton(key, label)
+        for key, label, icon_name in NAV_ITEMS:
+            button = NavButton(icon_name, label)
             button.clicked.connect(lambda _checked=False, k=key: self.navigate_to(k))
             layout.addWidget(button)
+            layout.addSpacing(2)
             self.nav_buttons[key] = button
-
-        divider = QFrame()
-        divider.setObjectName("sidebarDivider")
-        divider.setFixedHeight(1)
-        layout.addWidget(divider)
-
-        # Moved to sit directly below the nav items (no stretch before it)
-        # rather than pinned to the bottom with everything else - pinning
-        # both this block AND the footer to the bottom left a large dead
-        # gap directly under Settings. Only the stretch below (pushing just
-        # the version footer down) is left to create bottom spacing now.
-        status_block = QVBoxLayout()
-        status_block.setContentsMargins(10, 14, 10, 14)
-        status_block.setSpacing(8)
-        status_label = make_label("REAL-TIME\nPROTECTION", "eyebrowLabel")
-        status_label.setWordWrap(True)
-        status_block.addWidget(status_label)
-        status_row = QHBoxLayout()
-        self.sidebar_status_dot = StatusDot("active", glow=True)
-        status_row.addWidget(self.sidebar_status_dot)
-        self.sidebar_status_label = make_label("Active", "bodyText")
-        status_row.addWidget(self.sidebar_status_label)
-        status_row.addStretch()
-        status_block.addLayout(status_row)
-        layout.addLayout(status_block)
 
         layout.addStretch()
 
+        # --- Status box ---
+        status_box = QFrame()
+        status_box.setObjectName("card")
+        status_box.setStyleSheet(
+            f"QFrame#card {{ background: rgba(0, 255, 170, 0.03); "
+            f"border: 1px solid {theme.CYBER_BORDER_DEFAULT}; "
+            f"border-radius: 4px; }}"
+        )
+        status_layout = QVBoxLayout(status_box)
+        status_layout.setContentsMargins(12, 12, 12, 12)
+        status_layout.setSpacing(8)
+
+        status_eyebrow = make_label("// REAL-TIME", "metadataDisabled")
+        status_eyebrow.setStyleSheet(
+            f"color: {theme.CYBER_TEXT_MUTE}; font-size: 9px; font-weight: 700; "
+            f"letter-spacing: 2px; background: transparent;"
+        )
+        status_layout.addWidget(status_eyebrow)
+
+        status_row = QHBoxLayout()
+        status_row.setSpacing(8)
+        self.sidebar_status_dot = StatusDot("active", glow=True, pulse=True)
+        status_row.addWidget(self.sidebar_status_dot)
+        self.sidebar_status_label = make_label("ACTIVE", "bodyText")
+        self.sidebar_status_label.setStyleSheet(
+            f"color: {theme.CYBER_NEON}; font-size: 11px; font-weight: 700; "
+            f"letter-spacing: 1.5px; background: transparent;"
+        )
+        status_row.addWidget(self.sidebar_status_label)
+        status_row.addStretch()
+        status_layout.addLayout(status_row)
+
+        layout.addWidget(status_box)
+        layout.addSpacing(8)
+
+        # --- Footer divider + version ---
         footer_divider = QFrame()
         footer_divider.setObjectName("sidebarDivider")
         footer_divider.setFixedHeight(1)
         layout.addWidget(footer_divider)
 
         footer = make_label("DEVADARA v1.0", "sidebarFooter")
-        footer.setContentsMargins(20, 12, 20, 0)
+        footer.setStyleSheet(
+            f"color: {theme.CYBER_TEXT_MUTE}; font-size: 10px; "
+            f"letter-spacing: 1px; background: transparent; padding: 10px 8px 0 8px;"
+        )
         layout.addWidget(footer)
 
         self.app_state.protection_changed.connect(self._refresh_sidebar_status)
@@ -226,9 +277,12 @@ class MainWindow(QMainWindow):
     def _refresh_sidebar_status(self):
         active = self.app_state.is_realtime_protection_enabled()
         self.sidebar_status_dot.set_state("active" if active else "attention")
-        self.sidebar_status_label.setText("Active" if active else "Off")
+        self.sidebar_status_label.setText("ACTIVE" if active else "OFF")
         color = theme.CYBER_NEON if active else theme.CYBER_TEXT_SECONDARY
-        self.sidebar_status_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 600;")
+        self.sidebar_status_label.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: 700; "
+            f"letter-spacing: 1.5px; background: transparent;"
+        )
 
     def navigate_to(self, key):
         page = self.pages.get(key)
@@ -237,25 +291,26 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(page)
         for k, button in self.nav_buttons.items():
             button.setChecked(k == key)
-        if key == "threats":
-            self.threats_page.open_detected_tab()
+        if key == "results":
+            self.results_page.open_detected_tab()
 
     def _on_dashboard_scan_requested(self, mode):
         self.navigate_to("scan")
         self.scan_page.start_scan(mode)
 
     def _on_realtime_review(self, file_path):
-        """Review, clicked on the real-time scan popup: same Threats page,
-        same scan_log-backed data - never a second threat-management UI."""
-        self.navigate_to("threats")
-        self.threats_page.open_detected_tab()
+        """Review, clicked on the real-time scan popup: same Results page,
+        same scan_log-backed data — never a second threat-management UI."""
+        self.navigate_to("results")
+        self.results_page.open_detected_tab()
         if file_path:
             match = next(
-                (f for f in self.app_state.list_detected_threats() if f.get("file_path") == file_path),
+                (f for f in self.app_state.list_detected_threats()
+                 if f.get("file_path") == file_path),
                 None,
             )
             if match is not None:
-                self.threats_page._show_details(match)
+                self.results_page._show_details(match)
 
     def closeEvent(self, event):
         self.realtime_popup.close()

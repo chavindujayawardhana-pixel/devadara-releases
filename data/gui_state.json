@@ -9,6 +9,6 @@
   "notify_threat_detected": true,
   "notify_usb_scan_completed": true,
   "notify_protection_status": true,
-  "last_scan_at": "2026-09-18T02:23:42",
+  "last_scan_at": "2026-09-18T15:02:01",
   "last_scan_summary": "Full Scan: No threats found"
 }
