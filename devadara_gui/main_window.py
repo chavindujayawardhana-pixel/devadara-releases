@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(DashboardPage(navigate=self.navigate_to))
-        self.stack.addWidget(ScanPage())
+        self.stack.addWidget(ScanPage(navigate=self.navigate_to))
         for title, subtitle in PLACEHOLDER_PAGES:
             self.stack.addWidget(PagePlaceholder(title, subtitle))
         layout.addWidget(self.stack, 1)

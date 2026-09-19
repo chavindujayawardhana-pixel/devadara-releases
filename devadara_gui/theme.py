@@ -318,6 +318,29 @@ def build_stylesheet():
             color: {WARN};
         }}
 
+        /* ─── Scan progress ─── */
+        QProgressBar#scanProgressBar {{
+            background: {rgba_css((0, 255, 170, 20))};
+            border: 1px solid {BORDER};
+            border-radius: 3px;
+        }}
+
+        QProgressBar#scanProgressBar::chunk {{
+            background: qlineargradient(
+                x1:0, y1:0, x2:1, y2:0,
+                stop:0 {NEON}, stop:1 {CYAN}
+            );
+            border-radius: 3px;
+        }}
+
+        QPlainTextEdit#scanLogPanel {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            color: {TEXT_DIM};
+            padding: 8px;
+        }}
+
         /* ─── Page header ─── */
         QFrame#pageAccentBar {{
             background-color: {NEON};

@@ -17,6 +17,7 @@ instead of duplicating styling inline.
   RadioItem     - exclusive-group pill radio button (.radio-item)
   TreeCheckbox  - small custom checkbox, click-only (.tree-item input)
   TreeRow       - one checkbox-tree row, group or child (.tree-item)
+  StatusCircle  - large outline circle with a drawn check/exclamation mark
 """
 
 from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, Signal
@@ -28,12 +29,17 @@ from devadara_gui import theme
 
 class Card(QFrame):
     """A bordered panel with an optional title/badge header and neon
-    corner brackets, matching the mockup's .panel."""
+    corner brackets, matching the mockup's .panel.
 
-    def __init__(self, title="", badge="", parent=None):
+    accent: the corner-bracket color (defaults to NEON, unchanged for every
+    existing caller) - overridable so a card can reflect a semantic state,
+    e.g. the scan-complete card's red brackets when threats were found."""
+
+    def __init__(self, title="", badge="", accent=None, parent=None):
         super().__init__(parent)
         self.setObjectName("card")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._accent = accent or theme.NEON
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 16, 20, 20)
@@ -67,12 +73,16 @@ class Card(QFrame):
         self.content_layout.setSpacing(10)
         outer.addLayout(self.content_layout)
 
+    def set_accent(self, color):
+        self._accent = color
+        self.update()
+
     def paintEvent(self, event):
         super().paintEvent(event)  # draws the QSS background/border first
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(QColor(theme.NEON))
+        pen = QPen(QColor(self._accent))
         pen.setWidthF(2)
         painter.setPen(pen)
         painter.setOpacity(0.7)
@@ -648,3 +658,58 @@ class ActionCard(QFrame):
     def leaveEvent(self, event):
         self.setGraphicsEffect(None)
         super().leaveEvent(event)
+
+
+class StatusCircle(QWidget):
+    """A large outline circle with a centered drawn symbol - checkmark
+    ("success") or exclamation mark ("danger") - matching the scan-complete
+    card's icon. The symbol is drawn with QPainter, not a font glyph - the
+    same zero-font-risk approach TreeCheckbox's checkmark already uses,
+    doubly worth it here since this icon is large and prominent."""
+
+    def __init__(self, variant="success", size=90, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._variant = variant
+        self._apply_glow()
+
+    def set_variant(self, variant):
+        self._variant = variant
+        self._apply_glow()
+        self.update()
+
+    def _color(self):
+        return QColor(theme.NEON if self._variant == "success" else theme.DANGER)
+
+    def _apply_glow(self):
+        self.setGraphicsEffect(theme.glow_effect(self._color().name(), blur=24))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = self._color()
+
+        ring_rect = QRectF(4, 4, self.width() - 8, self.height() - 8)
+        painter.setPen(QPen(color, 2.5))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(ring_rect)
+
+        cx, cy = self.width() / 2, self.height() / 2
+        mark_pen = QPen(color, 3)
+        mark_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        mark_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(mark_pen)
+
+        if self._variant == "success":
+            painter.drawPolyline([
+                QPointF(cx - 14, cy + 1),
+                QPointF(cx - 4, cy + 11),
+                QPointF(cx + 16, cy - 13),
+            ])
+        else:
+            painter.drawLine(QPointF(cx, cy - 18), QPointF(cx, cy + 6))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(cx - 2.5, cy + 12, 5, 5))
+
+        painter.end()

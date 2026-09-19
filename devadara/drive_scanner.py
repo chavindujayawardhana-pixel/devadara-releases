@@ -3,11 +3,21 @@ drive_scanner.py
 
 Walks a directory tree and scans files, returning an outcome dictionary.
 Quick mode focuses on executable files. Full mode checks everything.
+
+Per directory, executable-shaped files have their digital signatures
+batch-prefetched in one powershell.exe call (see
+signature_scanner.check_digital_signatures_batch()) instead of each paying
+its own ~1-4s process-launch cost inside evaluate_file() - signature
+checking is otherwise the dominant real cost of scanning a folder with many
+executables. Batching per directory (not globally across the whole walk)
+keeps should_stop() interruption simple - nothing sits buffered across
+directory boundaries waiting to be flushed.
 """
 import os
 from devadara import scan_engine
 from devadara.exceptions import is_excepted
 from devadara.hidden_file_scanner import is_hidden
+from devadara.signature_scanner import check_digital_signatures_batch
 
 def walk_and_scan(root, quick, known_bad_hashes, model, feature_columns, trusted_publishers=None,
                   on_progress=None, should_stop=None, progress_every_n_files=100):
@@ -31,6 +41,18 @@ def walk_and_scan(root, quick, known_bad_hashes, model, feature_columns, trusted
         # Filter excepted directories
         dirnames[:] = [d for d in dirnames if not is_excepted(os.path.join(dirpath, d))]
 
+        exec_paths = [
+            os.path.join(dirpath, filename) for filename in filenames
+            if not is_excepted(os.path.join(dirpath, filename))
+            and os.path.splitext(filename)[1].lower() in scan_engine.EXECUTABLE_EXTENSIONS
+        ]
+        sig_by_path = (
+            check_digital_signatures_batch(
+                exec_paths, trusted_publishers=trusted_publishers, should_stop=should_stop
+            )
+            if exec_paths else {}
+        )
+
         for filename in filenames:
             if should_stop and should_stop():
                 outcome["interrupted"] = True
@@ -48,7 +70,8 @@ def walk_and_scan(root, quick, known_bad_hashes, model, feature_columns, trusted
                 continue
 
             result = scan_engine.evaluate_file(
-                file_path, known_bad_hashes, model, feature_columns, trusted_publishers
+                file_path, known_bad_hashes, model, feature_columns, trusted_publishers,
+                precomputed_signature=sig_by_path.get(file_path),
             )
             
             outcome["files_scanned"] += 1

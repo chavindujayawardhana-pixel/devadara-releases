@@ -57,19 +57,19 @@ _POWERSHELL_EXE = os.path.join(
 if not os.path.exists(_POWERSHELL_EXE):
     _POWERSHELL_EXE = "powershell.exe"
 
-# The file path is bound to $TargetPath as a plain parameter value - it is
-# never woven into this script text, so nothing in a filename can be
-# interpreted as PowerShell code.
-_SIGNATURE_CHECK_SCRIPT = (
-    "& { param($TargetPath) "
-    "$sig = Get-AuthenticodeSignature -LiteralPath $TargetPath; "
-    "[PSCustomObject]@{"
-    "Status=$sig.Status.ToString(); "
-    "Publisher=$sig.SignerCertificate.Subject; "
-    "NotAfter=$sig.SignerCertificate.NotAfter; "
-    "NotBefore=$sig.SignerCertificate.NotBefore"
-    "} | ConvertTo-Json -Compress }"
-)
+# One powershell.exe process checks any number of files (one, or many - see
+# check_digital_signature() and check_digital_signatures_batch()). This is a
+# bundled .ps1 file (like tools/yara64.exe) rather than an inline -Command
+# string: PowerShell's -Command only forwards the FIRST trailing CLI
+# argument into a script block's parameters, silently dropping the rest -
+# confirmed by direct testing, not assumed. -File properly forwards all of
+# them, but only when the target parameter is declared
+# ValueFromRemainingArguments (also confirmed by testing - plain positional
+# binding of several bare args to one array parameter does NOT auto-collect
+# them otherwise). Each path is still its own separate process argument,
+# never woven into script text, preserving the same injection-safety
+# guarantee the old inline script made.
+_BATCH_SIGNATURE_SCRIPT_PATH = os.path.join(PROJECT_ROOT, "tools", "batch_signature_check.ps1")
 
 _DOTNET_DATE_RE = re.compile(r"/Date\((-?\d+)\)/")
 _CN_RE = re.compile(r"CN=([^,]+)")
@@ -134,6 +134,43 @@ def is_trusted_publisher_name(publisher_cn, trusted_publishers):
     return any(normalized == name.strip().lower() for name in trusted_publishers)
 
 
+def _build_signature_result(status, publisher_subject, not_after_raw, trusted_publishers):
+    """
+    Turn one raw Get-AuthenticodeSignature record (already parsed out of
+    PowerShell's JSON) into the result dict shape documented on
+    check_digital_signature() below. Shared by the single-file and batch
+    paths so they can never silently diverge in how a record is
+    interpreted.
+    """
+    status = status or "Unknown"
+    publisher = _extract_cn(publisher_subject)
+    not_after = _parse_dotnet_date(not_after_raw)
+
+    signed = publisher is not None
+    is_expired = not_after is not None and not_after < datetime.now(timezone.utc)
+    valid_and_trusted = status == "Valid" and not is_expired
+
+    return {
+        "signed": signed,
+        "status": status,
+        "publisher": publisher,
+        "valid_and_trusted": valid_and_trusted,
+        "trusted_publisher_match": is_trusted_publisher_name(publisher, trusted_publishers),
+        "error": None,
+    }
+
+
+def _default_signature_result(error=None):
+    return {
+        "signed": False,
+        "status": "Error",
+        "publisher": None,
+        "valid_and_trusted": False,
+        "trusted_publisher_match": False,
+        "error": error,
+    }
+
+
 def check_digital_signature(file_path, trusted_publishers=None, timeout_seconds=15):
     """
     Ask Windows (via PowerShell's Get-AuthenticodeSignature) whether
@@ -158,60 +195,120 @@ def check_digital_signature(file_path, trusted_publishers=None, timeout_seconds=
     vanished) is reported as an unsigned/untrusted result with "error" set,
     rather than raising - callers should treat that the same as "couldn't
     verify, fall through to the next layer".
+
+    Delegates to check_digital_signatures_batch() with a single-element
+    list rather than its own inline -Command invocation (which this
+    function used until this session): -Command only forwards the first
+    trailing CLI argument to a script block's own parameters, and separately,
+    passing a path containing literal parentheses (e.g. any real path under
+    "Program Files (x86)") through that -Command form makes PowerShell
+    itself mis-tokenize the path and misreport a legitimate signed
+    executable as an unverifiable error - confirmed directly against a real
+    file on this machine, not assumed. -File (what the batch path already
+    uses) doesn't have either problem, so routing every signature check
+    through it, one path or many, both fixes this pre-existing correctness
+    bug and removes a second, now-redundant subprocess-invocation
+    mechanism.
+    """
+    results = check_digital_signatures_batch(
+        [file_path], trusted_publishers=trusted_publishers, timeout_seconds=timeout_seconds, chunk_size=1
+    )
+    return results[file_path]
+
+
+def check_digital_signatures_batch(file_paths, trusted_publishers=None, timeout_seconds=None,
+                                    chunk_size=40, should_stop=None):
+    """
+    Batch variant of check_digital_signature() for scanning MANY files at
+    once (a drive walk, hundreds of persistence/process entries) - each
+    call to check_digital_signature() spawns its own powershell.exe process
+    (~1-4s each, see scan_engine.py's docstring), which dominates real scan
+    time on anything with more than a handful of executables. This
+    collapses that into one powershell.exe launch per chunk of up to
+    chunk_size files instead of one per file.
+
+    file_paths: any iterable of file paths to check. Each path is still
+                bound as its own separate subprocess argument (inside a
+                PowerShell array parameter), never woven into script text -
+                the same injection-safety guarantee check_digital_signature()
+                makes, just for many paths in one process instead of one.
+    should_stop: optional zero-arg callable checked between chunks, so a
+                 caller with a Stop button stays responsive during a
+                 multi-chunk batch instead of blocking until every chunk
+                 finishes.
+
+    Returns a dict {file_path: result} with exactly one entry per path in
+    file_paths, in the same shape check_digital_signature() returns. A
+    chunk that fails outright (subprocess error/timeout/bad output) fills
+    in an error result for every path in that chunk only - other chunks
+    and the rest of the scan are unaffected, matching the project's rule
+    that one layer's failure degrades rather than aborts a scan.
     """
     if trusted_publishers is None:
         trusted_publishers = load_trusted_publishers()
 
-    default_result = {
-        "signed": False,
-        "status": "Error",
-        "publisher": None,
-        "valid_and_trusted": False,
-        "trusted_publisher_match": False,
-        "error": None,
-    }
+    paths = list(file_paths)
+    results = {}
 
-    try:
-        completed = subprocess.run(
-            [
-                _POWERSHELL_EXE,
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy", "Bypass",
-                "-Command", _SIGNATURE_CHECK_SCRIPT,
-                file_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        default_result["error"] = f"Could not run signature check: {exc}"
-        return default_result
+    for start in range(0, len(paths), chunk_size):
+        if should_stop and should_stop():
+            break
 
-    if completed.returncode != 0 or not completed.stdout.strip():
-        default_result["error"] = completed.stderr.strip() or "Signature check produced no output."
-        return default_result
+        chunk = paths[start:start + chunk_size]
+        chunk_timeout = timeout_seconds if timeout_seconds is not None else max(15, 2 * len(chunk))
 
-    try:
-        data = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        default_result["error"] = "Could not parse signature check output."
-        return default_result
+        try:
+            completed = subprocess.run(
+                [
+                    _POWERSHELL_EXE,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy", "Bypass",
+                    "-File", _BATCH_SIGNATURE_SCRIPT_PATH,
+                    *chunk,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=chunk_timeout,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            error = f"Could not run batch signature check: {exc}"
+            for path in chunk:
+                results[path] = _default_signature_result(error)
+            continue
 
-    status = data.get("Status") or "Unknown"
-    publisher = _extract_cn(data.get("Publisher"))
-    not_after = _parse_dotnet_date(data.get("NotAfter"))
+        if completed.returncode != 0 or not completed.stdout.strip():
+            error = completed.stderr.strip() or "Batch signature check produced no output."
+            for path in chunk:
+                results[path] = _default_signature_result(error)
+            continue
 
-    signed = publisher is not None
-    is_expired = not_after is not None and not_after < datetime.now(timezone.utc)
-    valid_and_trusted = status == "Valid" and not is_expired
+        try:
+            data = json.loads(completed.stdout)
+        except json.JSONDecodeError:
+            error = "Could not parse batch signature check output."
+            for path in chunk:
+                results[path] = _default_signature_result(error)
+            continue
 
-    return {
-        "signed": signed,
-        "status": status,
-        "publisher": publisher,
-        "valid_and_trusted": valid_and_trusted,
-        "trusted_publisher_match": is_trusted_publisher_name(publisher, trusted_publishers),
-        "error": None,
-    }
+        if isinstance(data, dict):
+            data = [data]
+
+        by_path = {}
+        for record in data:
+            path = record.get("Path")
+            if path:
+                by_path[path] = _build_signature_result(
+                    record.get("Status"), record.get("Publisher"), record.get("NotAfter"),
+                    trusted_publishers,
+                )
+
+        for path in chunk:
+            results[path] = by_path.get(
+                path, _default_signature_result("Path missing from batch signature check output.")
+            )
+
+    for path in paths:
+        results.setdefault(path, _default_signature_result("Signature check interrupted."))
+
+    return results

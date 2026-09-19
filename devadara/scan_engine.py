@@ -67,7 +67,8 @@ def _looks_executable(file_path):
     return os.path.splitext(file_path)[1].lower() in EXECUTABLE_EXTENSIONS
 
 
-def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_publishers=None):
+def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_publishers=None,
+                   precomputed_signature=None):
     """
     Run the full Hash -> Signature -> ML pipeline against one file.
 
@@ -76,6 +77,17 @@ def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_p
                          this in explicitly when scanning many files so the
                          whitelist is only loaded from disk once; if
                          omitted, it's loaded fresh for this one file.
+
+    precomputed_signature: a check_digital_signature()-shaped result, used
+                            in place of calling check_digital_signature()
+                            here, for callers that already batch-checked
+                            many files' signatures in one PowerShell process
+                            up front (see signature_scanner.
+                            check_digital_signatures_batch()) rather than
+                            paying a separate ~1-4s process launch per file.
+                            None (the default, and what every existing
+                            caller passes) runs today's exact single-file
+                            check, unchanged.
 
     Returns a dictionary:
         {
@@ -160,7 +172,10 @@ def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_p
     if trusted_publishers is None:
         trusted_publishers = load_trusted_publishers()
 
-    signature = check_digital_signature(file_path, trusted_publishers=trusted_publishers)
+    if precomputed_signature is not None:
+        signature = precomputed_signature
+    else:
+        signature = check_digital_signature(file_path, trusted_publishers=trusted_publishers)
     result["signature"] = signature
 
     if signature["valid_and_trusted"]:
