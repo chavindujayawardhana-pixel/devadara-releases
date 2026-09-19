@@ -45,7 +45,7 @@ SYSTEM_AREA_LABELS = {
     "startup": "Start-Up Area",
 }
 
-USB_POLL_INTERVAL_MS = 2000  # matches usb_monitor.start_usb_monitoring()'s own default
+USB_POLL_INTERVAL_MS = 500
 
 
 def list_fixed_drives():
@@ -274,6 +274,17 @@ class ScanPage(QWidget):
         for key, row in self._rows.items():
             row.setChecked(key in checked_keys)
         self._update_usb_gate()
+
+    def select_mode(self, mode_name):
+        """Programmatically select a mode (e.g. from Dashboard's Quick Scan/
+        Full Scan Quick Actions) - checks the matching radio button and
+        applies its auto-check behavior, same as a real click would (radio
+        buttons don't emit idClicked on a programmatic setChecked())."""
+        button = self._radio_buttons.get(mode_name)
+        if button is None:
+            return
+        button.setChecked(True)
+        self._apply_mode(mode_name)
 
     def _update_usb_gate(self):
         no_usb = self._current_mode == "Scan USB" and not self._usb_drives

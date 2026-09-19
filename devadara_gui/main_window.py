@@ -301,9 +301,17 @@ class MainWindow(QMainWindow):
         self.setMaximumSize(self.MAX_WIDTH, self.MAX_HEIGHT)
         self.resize(self.MAX_WIDTH, self.MAX_HEIGHT)
 
-    def navigate_to(self, index):
+    def navigate_to(self, index, mode=None):
         """Switch both the content stack and the sidebar's active nav item
         to the given page index - used by DashboardPage's Quick Actions,
-        and any later phase's own in-page navigation shortcuts."""
+        and any later phase's own in-page navigation shortcuts.
+
+        mode: optional - for the Scan page, also selects that mode (e.g.
+        Dashboard's Quick Scan/Full Scan cards land with the matching mode
+        already applied, not just whatever it last was)."""
         self.sidebar.nav_items[index].setChecked(True)
         self.stack.setCurrentIndex(index)
+        if mode is not None:
+            page = self.stack.widget(index)
+            if isinstance(page, ScanPage):
+                page.select_mode(mode)

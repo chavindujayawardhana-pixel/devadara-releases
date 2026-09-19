@@ -28,14 +28,15 @@ from devadara_gui.components import ActionCard, Card, HeroStatusCard, PageHeader
 THREAT_TIERS = {"known_bad", "malware"}
 
 QUICK_ACTIONS = [
-    # (icon, title, nav_index) - nav_index matches main_window.NAV_ITEMS
-    # order (0 Dashboard, 1 Scan, 2 Protection, 3 Results, 4 Settings).
-    # Quick Scan and Full Scan both go to the Scan page - Phase 3 builds its
-    # real mode-selection content.
-    ("⌖", "Quick Scan", 1),
-    ("◈", "Full Scan", 1),
-    ("\U0001F6E1", "Protection", 2),  # 🛡 - was ⚙, duplicated Settings' icon
-    ("▤", "Results", 3),
+    # (icon, title, nav_index, scan_mode) - nav_index matches
+    # main_window.NAV_ITEMS order (0 Dashboard, 1 Scan, 2 Protection,
+    # 3 Results, 4 Settings). Quick Scan and Full Scan both go to the Scan
+    # page, additionally selecting that mode there (scan_mode); Protection/
+    # Results just navigate (scan_mode=None).
+    ("⌖", "Quick Scan", 1, "Quick Scan"),
+    ("◈", "Full Scan", 1, "Full Scan"),
+    ("\U0001F6E1", "Protection", 2, None),  # 🛡 - was ⚙, duplicated Settings' icon
+    ("▤", "Results", 3, None),
 ]
 
 
@@ -102,9 +103,9 @@ class DashboardPage(QWidget):
         grid = QGridLayout()
         grid.setSpacing(12)
 
-        for col, (icon, title, nav_index) in enumerate(QUICK_ACTIONS):
+        for col, (icon, title, nav_index, scan_mode) in enumerate(QUICK_ACTIONS):
             action = ActionCard(icon, title)
-            action.clicked.connect(lambda index=nav_index: self._navigate(index))
+            action.clicked.connect(lambda index=nav_index, mode=scan_mode: self._navigate(index, mode))
             grid.addWidget(action, 0, col)
             grid.setColumnStretch(col, 1)
 
