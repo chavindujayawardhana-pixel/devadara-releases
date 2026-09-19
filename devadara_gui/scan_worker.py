@@ -73,6 +73,11 @@ from devadara.signature_scanner import check_digital_signatures_batch, load_trus
 
 THREAT_TIERS = {"known_bad", "malware", "suspicious"}
 
+# Matches check_digital_signatures_batch()'s own default chunk_size and
+# drive_scanner.py's own _SIGNATURE_SLICE_SIZE - see _evaluate_entries()'s
+# docstring for why prefetching happens in bounded slices, not all at once.
+_SIGNATURE_SLICE_SIZE = 40
+
 # Registry Area / Start-Up Area / Services tree items -> persistence_scanner
 # entry "source" values. Start-Up Area maps to Scheduled Tasks - the
 # closest available concept; devadara/ has no separate "Startup folder
@@ -221,54 +226,62 @@ class ScanWorker(QObject):
         unique path per cache hit, with a progress/stop check between each
         entry. Returns the updated (checked, threats, hidden, stopped).
 
-        Before the per-entry loop, batch-prefetches signature checks for
-        every unique executable-shaped path here (see
-        signature_scanner.check_digital_signatures_batch()'s docstring) -
-        entries is a fully-known list up front (unlike a live filesystem
-        walk), so this collapses what would be one powershell.exe launch
-        per executable into a handful of chunked launches. A status line is
-        emitted first since this prefetch is itself a blocking step before
-        the first per-entry progress update - without it the screen would
-        look frozen for however long the prefetch takes, the same class of
-        problem the persistence-gathering/model-load fix already solved
-        elsewhere in this file."""
-        unique_paths = sorted({
-            path for path in (get_path(e) for e in entries)
-            if path and os.path.splitext(path)[1].lower() in scan_engine.EXECUTABLE_EXTENSIONS
-        })
-        sig_by_path = {}
-        if unique_paths:
-            self.progress.emit("checking file signatures...", checked)
-            sig_by_path = check_digital_signatures_batch(
-                unique_paths, trusted_publishers=trusted_publishers, should_stop=self._should_stop
-            )
-
+        Signature checks for executable-shaped entries are batch-prefetched
+        per SLICE of up to _SIGNATURE_SLICE_SIZE entries at a time (not for
+        every entry up front) - prefetching everything before evaluating
+        any entry produced a real, measured multi-second stretch with zero
+        progress on this session's own 488-persistence-entry test (worse on
+        a machine with more entries), the same class of stall confirmed and
+        fixed the same way in drive_scanner.walk_and_scan(). A path already
+        resolved in an earlier slice is never re-fetched."""
         cache = {}
+        sig_by_path = {}
         stopped = False
-        for entry in entries:
+        for slice_start in range(0, len(entries), _SIGNATURE_SLICE_SIZE):
             if self._should_stop():
                 stopped = True
                 break
 
-            path = get_path(entry)
-            label = get_label(entry)
-            if path:
-                if path not in cache:
-                    cache[path] = scan_engine.evaluate_file(
-                        path, known_bad_hashes, model, feature_columns,
-                        trusted_publishers=trusted_publishers,
-                        precomputed_signature=sig_by_path.get(path),
-                    )
-                result = cache[path]
-                entry["scan"] = result
-                checked += 1
-                if result["tier"] in THREAT_TIERS:
-                    threats += 1
-            else:
-                entry["scan"] = None
+            entry_slice = entries[slice_start:slice_start + _SIGNATURE_SLICE_SIZE]
 
-            self.progress.emit(label, checked)
-            self.stats.emit(checked, threats, hidden)
-            self.log_line.emit(label)
+            new_exec_paths = sorted({
+                path for path in (get_path(e) for e in entry_slice)
+                if path and path not in sig_by_path
+                and os.path.splitext(path)[1].lower() in scan_engine.EXECUTABLE_EXTENSIONS
+            })
+            if new_exec_paths:
+                sig_by_path.update(check_digital_signatures_batch(
+                    new_exec_paths, trusted_publishers=trusted_publishers,
+                    should_stop=self._should_stop, chunk_size=_SIGNATURE_SLICE_SIZE,
+                ))
+
+            for entry in entry_slice:
+                if self._should_stop():
+                    stopped = True
+                    break
+
+                path = get_path(entry)
+                label = get_label(entry)
+                if path:
+                    if path not in cache:
+                        cache[path] = scan_engine.evaluate_file(
+                            path, known_bad_hashes, model, feature_columns,
+                            trusted_publishers=trusted_publishers,
+                            precomputed_signature=sig_by_path.get(path),
+                        )
+                    result = cache[path]
+                    entry["scan"] = result
+                    checked += 1
+                    if result["tier"] in THREAT_TIERS:
+                        threats += 1
+                else:
+                    entry["scan"] = None
+
+                self.progress.emit(label, checked)
+                self.stats.emit(checked, threats, hidden)
+                self.log_line.emit(label)
+
+            if stopped:
+                break
 
         return checked, threats, hidden, stopped
