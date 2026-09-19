@@ -14,9 +14,12 @@ instead of duplicating styling inline.
   HeroStatusCard- big status banner (.hero)
   StatCard      - label + value stat tile (.stat-card)
   ActionCard    - clickable icon+title+desc card (.action-card)
+  RadioItem     - exclusive-group pill radio button (.radio-item)
+  TreeCheckbox  - small custom checkbox, click-only (.tree-item input)
+  TreeRow       - one checkbox-tree row, group or child (.tree-item)
 """
 
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, Qt, Signal
+from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -102,7 +105,15 @@ class Button(QPushButton):
         self.setProperty("variant", variant)
         self.style().unpolish(self)
         self.style().polish(self)
-        self.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=20) if variant == "primary" else None)
+        self._update_glow()
+
+    def _update_glow(self):
+        glow = getattr(self, "_variant", None) == "primary" and self.isEnabled()
+        self.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=20) if glow else None)
+
+    def setEnabled(self, enabled):
+        super().setEnabled(enabled)
+        self._update_glow()
 
 
 class ToggleSwitch(QWidget):
@@ -399,6 +410,193 @@ class StatCard(QFrame):
     def leaveEvent(self, event):
         self.setGraphicsEffect(None)
         super().leaveEvent(event)
+
+
+class _ClickableLabel(QLabel):
+    """A QLabel that emits clicked() - used for the tree's collapse arrow,
+    where a full QPushButton's chrome/padding isn't wanted."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+class RadioItem(QPushButton):
+    """A pill-shaped exclusive-group radio button matching .radio-item.
+    The label is native QPushButton text (plain Latin text, no icon glyph,
+    so none of the font-fallback risk NavItem/ActionCard's icons have) -
+    only the circle+dot indicator is custom-painted, in the QSS rule's
+    reserved left padding."""
+
+    def __init__(self, text, parent=None):
+        super().__init__(text.upper(), parent)
+        self.setObjectName("radioItem")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setProperty("active", False)
+        self.setFont(theme.letter_spaced_font(size=9, bold=True, spacing=1))
+        self.toggled.connect(self._on_toggled)
+
+    def _on_toggled(self, checked):
+        self.setProperty("active", checked)
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=10) if checked else None)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)  # background/border/text via QSS
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        checked = self.isChecked()
+        color = QColor(theme.NEON) if checked else QColor(theme.TEXT_MUTE)
+
+        cx, cy, r = 18.0, self.height() / 2, 7.0
+        painter.setPen(QPen(color, 2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRectF(cx - r, cy - r, r * 2, r * 2))
+
+        if checked:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(theme.NEON))
+            inner_r = 3.0
+            painter.drawEllipse(QRectF(cx - inner_r, cy - inner_r, inner_r * 2, inner_r * 2))
+
+        painter.end()
+
+
+class TreeCheckbox(QWidget):
+    """Small checkbox matching the mockup's tree-item checkbox styling.
+
+    Deliberately does NOT self-toggle on click like ToggleSwitch does - it
+    only emits clicked(), and the owner decides whether to actually call
+    setChecked(). That's what lets ScanPage intercept a System Area uncheck
+    with a confirmation dialog *before* any visual change happens, instead
+    of toggling then reverting (which would flash).
+    """
+
+    clicked = Signal()
+
+    def __init__(self, checked=False, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(16, 16)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._checked = checked
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, checked):
+        checked = bool(checked)
+        if checked == self._checked:
+            return
+        self._checked = checked
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = QRectF(1, 1, self.width() - 2, self.height() - 2)
+        if self._checked:
+            painter.setBrush(QColor(0, 255, 170, 38))
+            painter.setPen(QPen(QColor(theme.NEON), 1.5))
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(theme.TEXT_MUTE), 1.5))
+        painter.drawRoundedRect(rect, 3, 3)
+
+        if self._checked:
+            # a drawn checkmark (line segments), not a font glyph - avoids
+            # any repeat of the icon-font-fallback bug class for "✓".
+            pen = QPen(QColor(theme.NEON), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.drawPolyline([
+                QPointF(rect.left() + 3, rect.top() + 8),
+                QPointF(rect.left() + 6.5, rect.bottom() - 3),
+                QPointF(rect.right() - 3, rect.top() + 4),
+            ])
+
+        painter.end()
+
+
+class TreeRow(QWidget):
+    """One row in the Scan page's checkbox tree, matching .tree-item /
+    .tree-indent - a group row (icon + collapsible ▾/▸ arrow, e.g. Computer
+    Drive/System Area) or a plain indented child row.
+
+    toggled(requested_checked) fires when the checkbox is clicked, carrying
+    the state the user is requesting (not yet applied - see TreeCheckbox).
+    The owner calls setChecked() to actually apply it, or doesn't (e.g. the
+    System Area confirmation dialog was declined).
+    """
+
+    toggled = Signal(bool)
+    collapse_toggled = Signal(bool)  # only meaningful for group rows; True = expanded
+
+    def __init__(self, label, is_group=False, icon="", indent=False, checked=False, parent=None):
+        super().__init__(parent)
+        self.setObjectName("treeRow")
+        self.setProperty("hoverable", True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self._expanded = True
+
+        layout = QHBoxLayout(self)
+        left_margin = 34 if indent else 10
+        layout.setContentsMargins(left_margin, 5, 10, 5)
+        layout.setSpacing(10)
+
+        self.arrow_label = None
+        if is_group:
+            self.arrow_label = _ClickableLabel("▾")
+            self.arrow_label.setObjectName("treeArrow")
+            self.arrow_label.setFixedWidth(14)
+            self.arrow_label.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.arrow_label.setFont(QFont(theme.ICON_FONT_FAMILY, 9))
+            self.arrow_label.clicked.connect(self._on_arrow_clicked)
+            layout.addWidget(self.arrow_label)
+
+        self.checkbox = TreeCheckbox(checked=checked)
+        self.checkbox.clicked.connect(
+            lambda: self.toggled.emit(not self.checkbox.isChecked())
+        )
+        layout.addWidget(self.checkbox)
+
+        if icon:
+            icon_label = QLabel(icon)
+            icon_label.setFont(QFont(theme.FONT_FALLBACKS, 12))
+            icon_label.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=6))
+            layout.addWidget(icon_label)
+
+        text_label = QLabel(label)
+        text_label.setObjectName("treeLabel")
+        text_label.setFont(theme.letter_spaced_font(size=9, bold=is_group, spacing=0.5))
+        layout.addWidget(text_label)
+
+        layout.addStretch(1)
+
+    def _on_arrow_clicked(self):
+        self._expanded = not self._expanded
+        self.arrow_label.setText("▾" if self._expanded else "▸")
+        self.collapse_toggled.emit(self._expanded)
+
+    def isChecked(self):
+        return self.checkbox.isChecked()
+
+    def setChecked(self, checked):
+        self.checkbox.setChecked(checked)
 
 
 class ActionCard(QFrame):

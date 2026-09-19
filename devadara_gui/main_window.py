@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from devadara_gui import theme
 from devadara_gui.components import NavItem, PageHeader
 from devadara_gui.dashboard_page import DashboardPage
+from devadara_gui.scan_page import ScanPage
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # The processed (transparent-cornered) icon - used for both the window/
@@ -33,18 +34,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
 
 NAV_ITEMS = [
-    ("▣", "Dashboard"),   # ▣
-    ("⌖", "Scan"),        # ⌖
-    ("◈", "Protection"),  # ◈
-    ("▤", "Results"),     # ▤
-    ("⚙", "Settings"),    # ⚙
+    ("▣", "Dashboard"),         # ▣
+    ("⌖", "Scan"),              # ⌖
+    ("\U0001F6E1", "Protection"),  # 🛡 - was ◈, duplicated Scan's icon
+    ("▤", "Results"),           # ▤
+    ("⚙", "Settings"),          # ⚙
 ]
 
-# Dashboard (index 0) has real content - see DashboardPage. The rest are
-# still placeholders; this list stays in NAV_ITEMS order starting from
-# index 1 so PLACEHOLDER_PAGES[i] lines up with NAV_ITEMS[i + 1].
+# Dashboard (index 0) and Scan (index 1) have real content - see
+# DashboardPage/ScanPage. The rest are still placeholders; this list stays
+# in NAV_ITEMS order starting from index 2 so PLACEHOLDER_PAGES[i] lines up
+# with NAV_ITEMS[i + 2].
 PLACEHOLDER_PAGES = [
-    ("Scan", "// select scan mode or configure targets"),
     ("Protection", "// security modules — status and control"),
     ("Results", "// findings from last scan — click path to locate"),
     ("Settings", "// configure system preferences"),
@@ -288,6 +289,7 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self.stack.addWidget(DashboardPage(navigate=self.navigate_to))
+        self.stack.addWidget(ScanPage())
         for title, subtitle in PLACEHOLDER_PAGES:
             self.stack.addWidget(PagePlaceholder(title, subtitle))
         layout.addWidget(self.stack, 1)

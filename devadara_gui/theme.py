@@ -212,6 +212,12 @@ def build_stylesheet():
             background: #00ffcc;
         }}
 
+        QPushButton#themedButton:disabled {{
+            background: {rgba_css((90, 138, 122, 25))};
+            border: 1px solid {BORDER};
+            color: {TEXT_MUTE};
+        }}
+
         /* ─── Hero status card ─── */
         QFrame#heroCard {{
             background: qlineargradient(
@@ -266,6 +272,50 @@ def build_stylesheet():
 
         QLabel#actionTitle {{
             color: {TEXT};
+        }}
+
+        /* ─── Radio items (Scan page mode row) ─── */
+        QPushButton#radioItem {{
+            padding: 8px 14px 8px 34px;
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            background: transparent;
+            color: {TEXT_DIM};
+        }}
+
+        QPushButton#radioItem:hover {{
+            color: {TEXT};
+            border-color: {TEXT_DIM};
+        }}
+
+        QPushButton#radioItem[active="true"] {{
+            color: {NEON};
+            border-color: {NEON};
+            background: {rgba_css((0, 255, 170, 20))};
+        }}
+
+        /* ─── Checkbox tree (Scan page) ─── */
+        QFrame#treeContainer {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+        }}
+
+        QWidget#treeRow[hoverable="true"]:hover {{
+            background: {rgba_css((0, 255, 170, 15))};
+            border-radius: 3px;
+        }}
+
+        QLabel#treeLabel {{
+            color: {TEXT};
+        }}
+
+        QLabel#treeArrow {{
+            color: {NEON};
+        }}
+
+        QLabel#usbNotConnected {{
+            color: {WARN};
         }}
 
         /* ─── Page header ─── */

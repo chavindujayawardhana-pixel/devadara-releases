@@ -34,7 +34,7 @@ QUICK_ACTIONS = [
     # real mode-selection content.
     ("⌖", "Quick Scan", 1),
     ("◈", "Full Scan", 1),
-    ("⚙", "Protection", 2),
+    ("\U0001F6E1", "Protection", 2),  # 🛡 - was ⚙, duplicated Settings' icon
     ("▤", "Results", 3),
 ]
 
