@@ -14,6 +14,9 @@ explicit click on the action button:
     that word is typed (Delete Permanently).
   - tick_label="...": the action button stays disabled until the box is
     ticked (bulk actions such as Unhide All).
+  - cancel_label="...": a clearer name for the safe default button (e.g.
+    "Review now" on the quit reminder) - it still cancels and is still the
+    default.
 
 Callers never act on their own: they call confirm() and only then do the
 work. Tests replace dialogs.confirm to answer for the user, which is why
@@ -43,7 +46,7 @@ ITEM_LINE_WIDTH = 500   # px; longer paths are shortened in the middle
 
 class ConfirmDialog(QDialog):
     def __init__(self, parent, title, message, action_label, items=(), details="",
-                 typed_word=None, tick_label=None):
+                 typed_word=None, tick_label=None, cancel_label="Cancel"):
         super().__init__(parent)
         self.setObjectName("confirmDialog")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -109,7 +112,7 @@ class ConfirmDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        self.cancel_button = Button("Cancel")
+        self.cancel_button = Button(cancel_label.replace("&", "&&"))
         self.action_button = Button(action_label.replace("&", "&&"))
         # Cancel is the default: Enter (and Escape, QDialog's own reject)
         # never runs the action - only a click on the action button does.
@@ -151,19 +154,20 @@ class ConfirmDialog(QDialog):
 
 
 def build_confirm_dialog(parent, title, message, action_label, items=(), details="",
-                         typed_word=None, tick_label=None):
+                         typed_word=None, tick_label=None, cancel_label="Cancel"):
     """The dialog confirm() runs - returned unexecuted for tests/previews."""
     dialog = ConfirmDialog(parent, title, message, action_label, items=items, details=details,
-                           typed_word=typed_word, tick_label=tick_label)
+                           typed_word=typed_word, tick_label=tick_label, cancel_label=cancel_label)
     dialog.center_on_screen()
     return dialog
 
 
 def confirm(parent, title, message, action_label, items=(), details="",
-            typed_word=None, tick_label=None):
+            typed_word=None, tick_label=None, cancel_label="Cancel"):
     """Show the warning; True only if the user clicked the action button."""
     dialog = build_confirm_dialog(parent, title, message, action_label, items=items,
-                                  details=details, typed_word=typed_word, tick_label=tick_label)
+                                  details=details, typed_word=typed_word, tick_label=tick_label,
+                                  cancel_label=cancel_label)
     return dialog.exec() == QDialog.DialogCode.Accepted
 
 

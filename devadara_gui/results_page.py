@@ -27,6 +27,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -150,6 +151,8 @@ class ResultsTab(QWidget):
     (cells, payload); column 0 is always the checkbox."""
 
     path_clicked = Signal(str)
+    # Row ticks changed in bulk (select all) - itemChanged is blocked then.
+    checks_changed = Signal()
 
     def __init__(self, columns, path_column, priority_column=None, parent=None):
         super().__init__(parent)
@@ -190,6 +193,17 @@ class ResultsTab(QWidget):
         self.table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self.table, 1)
 
+        # "Select all" in the checkbox column's header. It ONLY ticks or
+        # unticks rows - it is never connected to any action; the action
+        # buttons below still warn first, naming the count and the files.
+        self.select_all = QCheckBox(header)
+        self.select_all.setObjectName("resultsSelectAll")
+        self.select_all.setTristate(True)  # shows "some ticked"; clicks are handled below
+        self.select_all.setToolTip("Tick or untick every row. This only selects - it does not run any action.")
+        self.select_all.clicked.connect(self._on_select_all_clicked)
+        self.table.itemChanged.connect(self._sync_select_all)
+        header.geometriesChanged.connect(self._place_select_all)
+        header.sectionResized.connect(self._place_select_all)
 
         self.actions = QHBoxLayout()
         self.actions.setSpacing(10)
@@ -228,6 +242,7 @@ class ResultsTab(QWidget):
             table.setItem(0, 0, item)
             table.setSpan(0, 0, 1, len(self._columns))
             table.setRowHeight(0, 110)
+            self._sync_select_all()
             QTimer.singleShot(0, self._fit_columns)
             return
         table.setRowCount(len(rows))
@@ -259,6 +274,7 @@ class ResultsTab(QWidget):
             lines = item.text().count("\n") + 1 if item is not None else 1
             table.setRowHeight(r, max(36, lines * line_height + 16))
 
+        self._sync_select_all()
         QTimer.singleShot(0, self._fit_columns)
 
     PATH_SHARE = 0.25     # the path column never gets less than this share...
@@ -305,7 +321,44 @@ class ResultsTab(QWidget):
         for c, w in natural.items():
             header.resizeSection(c, w)
         header.resizeSection(self._path_column, max(room - sum(natural.values()), self.PATH_MIN))
+        self._place_select_all()
 
+    def _place_select_all(self, *_):
+        header = self.table.horizontalHeader()
+        size = self.select_all.sizeHint()
+        self.select_all.resize(size)
+        # Lined up with the rows' own check boxes, which sit after the
+        # item padding (theme.py), not centred in the column.
+        indicator_left = self.CELL_PADDING + 7
+        self.select_all.move(header.sectionViewportPosition(0) + indicator_left - (size.width() - 13) // 2,
+                             (header.height() - size.height()) // 2)
+
+    def _row_check_items(self):
+        return [self.table.item(r, 0) for r in range(len(self._payloads))]
+
+    def _on_select_all_clicked(self):
+        """Tick every row, or untick every row if all were already ticked.
+        Selection only - nothing else happens."""
+        items = self._row_check_items()
+        target = (Qt.CheckState.Unchecked if items and all(i.checkState() == Qt.CheckState.Checked for i in items)
+                  else Qt.CheckState.Checked)
+        self.table.blockSignals(True)
+        for item in items:
+            item.setCheckState(target)
+        self.table.blockSignals(False)
+        self.table.viewport().update()
+        self._sync_select_all()
+        self.checks_changed.emit()
+
+    def _sync_select_all(self, *_):
+        items = self._row_check_items()
+        ticked = sum(1 for i in items if i is not None and i.checkState() == Qt.CheckState.Checked)
+        state = (Qt.CheckState.Unchecked if ticked == 0 else
+                 Qt.CheckState.Checked if ticked == len(items) else Qt.CheckState.PartiallyChecked)
+        self.select_all.blockSignals(True)
+        self.select_all.setCheckState(state)
+        self.select_all.setEnabled(bool(items))
+        self.select_all.blockSignals(False)
 
     # Fitted after the event, once the table itself has its final width - a
     # hidden tab (or one mid-resize) still reports a stale viewport width.
@@ -415,6 +468,7 @@ class ResultsPage(QWidget):
         self.resume_button = process.add_action("Resume", lambda: self.process_action("resume"))
         self.kill_button = process.add_action("Kill", lambda: self.process_action("kill"))
         process.table.itemChanged.connect(self._update_process_buttons)
+        process.checks_changed.connect(self._update_process_buttons)
 
         quarantined = self.tabs["Quarantine"]
         self.restore_button = quarantined.add_action("Restore Checked", self.restore_checked)
@@ -473,6 +527,19 @@ class ResultsPage(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_tab_labels()
+
+    def pending_count(self):
+        """How many of the last manual scan's results (memory only - lost on
+        quit) are still waiting for the user: flagged files still on disk,
+        startup entries whose target is still there, hidden files still
+        hidden, flagged programs still running. Scan-log findings aren't
+        counted - they're on disk and survive a restart."""
+        store = self._store
+        return (sum(1 for r in store.flagged if os.path.isfile(r["file_path"]))
+                + sum(1 for e in store.startup if os.path.exists(e.get("resolved_path") or ""))
+                + sum(1 for p in store.hidden if hidden_file_scanner.is_hidden(p))
+                + sum(1 for p in store.processes
+                      if p.get("create_time") is not None and still_same_process(p)))
 
     def virus_items(self):
         """Last-scan flagged files + unattended scan-log findings, one item

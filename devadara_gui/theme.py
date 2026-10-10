@@ -479,6 +479,32 @@ def build_stylesheet():
             background: {rgba_css(BORDER_GLOW_RGBA)};
         }}
 
+        QCheckBox#resultsSelectAll {{
+            background: transparent;
+        }}
+
+        QCheckBox#resultsSelectAll::indicator {{
+            width: 13px;
+            height: 13px;
+            border: 1px solid {TEXT_MUTE};
+            border-radius: 2px;
+            background: transparent;
+        }}
+
+        QCheckBox#resultsSelectAll::indicator:checked {{
+            border-color: {NEON};
+            background: {rgba_css(BORDER_GLOW_RGBA)};
+        }}
+
+        QCheckBox#resultsSelectAll::indicator:indeterminate {{
+            border-color: {NEON};
+            background: {rgba_css((0x00, 0xFF, 0xAA, 0x14))};
+        }}
+
+        QCheckBox#resultsSelectAll::indicator:disabled {{
+            border-color: {BORDER};
+        }}
+
         QTableWidget#resultsTable QTableCornerButton::section {{
             background: transparent;
             border: none;

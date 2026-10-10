@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from devadara import scan_log
-from devadara_gui import theme
+from devadara_gui import dialogs, theme
 from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
 from devadara_gui.process_guard import ProcessGuard
@@ -434,6 +434,11 @@ class MainWindow(QMainWindow):
         self.scan_page.auto_scan_flagged.connect(self._on_auto_scan_flagged)
         self.scan_page.manual_scan_results.connect(self.results_store.set_last_scan)
 
+        # Windows is logging off / shutting down: never hold that up with
+        # the unreviewed-results reminder (see _ok_to_quit).
+        self._session_ending = False
+        QApplication.instance().commitDataRequest.connect(self._on_session_ending)
+
         # Behavior monitoring (alert only): log, popup, tray message. The
         # popup's Suspend/Resume/Kill each need their own confirmation.
         self.behavior_popup = BehaviorAlertPopup(guard=self.process_guard, parent=self)
@@ -564,7 +569,36 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
+    def _on_session_ending(self, *_):
+        self._session_ending = True
+
+    def _ok_to_quit(self):
+        """The unreviewed-results reminder, for a REAL quit only (tray Exit,
+        or X when there's no tray) - never for X-to-tray, and never while
+        Windows is logging off or shutting down. "Review now" (the default;
+        Enter/Escape) cancels the quit and opens the Results page. "Quit
+        anyway" just drops the in-memory results - nothing is ignored or
+        marked safe, so the next scan flags those files again."""
+        if self._session_ending:
+            return True
+        pending = self.results_page.pending_count()
+        if pending == 0:
+            return True
+        if dialogs.confirm(
+                self, "Unreviewed results",
+                f"There are {pending} results you have not acted on. Do you want to review them now?",
+                "Quit anyway",
+                details=("Quitting just forgets them - nothing is marked safe or ignored, "
+                         "and the next scan will flag these files again."),
+                cancel_label="Review now"):
+            return True
+        self._restore_from_tray()
+        self.navigate_to(3)  # Results
+        return False
+
     def _exit_app(self):
+        if not self._ok_to_quit():
+            return
         self.scan_page.force_stop_running_scan()
         self.auto_scan_controller.stop_all_watches()
         if self.tray_icon is not None:
@@ -587,6 +621,11 @@ class MainWindow(QMainWindow):
         # scan silently still running in the background with no visible
         # popup/window would be confusing, so this path stops it (after
         # confirmation) rather than leaving it orphaned.
+        if self.tray_icon is None and not self._ok_to_quit():
+            # No tray means X really quits - the unreviewed-results
+            # reminder comes first, before anything is stopped.
+            event.ignore()
+            return
         if self.scan_page.is_scan_running():
             box = QMessageBox(self)
             box.setWindowTitle("Scan is running")
@@ -602,7 +641,8 @@ class MainWindow(QMainWindow):
 
         if self.tray_icon is None:
             # No tray to hide into - hiding would leave an invisible,
-            # unreachable process, so close for real instead.
+            # unreachable process, so close for real instead (the
+            # unreviewed-results reminder already ran above).
             self.auto_scan_controller.stop_all_watches()
             event.accept()
             return
