@@ -9,6 +9,7 @@ data/gui_activity_log.json
 data/memory_hashes.json
 data/scan_log.jsonl
 data/process_actions.jsonl
+data/ignored_files.json
 data/scan_exceptions.json
 data/quarantine_index.json
 data/quarantine/

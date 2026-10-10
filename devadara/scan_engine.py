@@ -48,7 +48,7 @@ pipeline is implemented exactly once.
 
 import os
 
-from devadara import yara_scanner
+from devadara import ignore_list, yara_scanner
 from devadara.hash_scanner import compute_sha256
 from devadara.ml_scanner import predict_file
 from devadara.signature_scanner import check_digital_signature, load_trusted_publishers
@@ -124,6 +124,9 @@ def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_p
                             (a ransom note, a malicious script) never reaches
                             those checks at all
         "safe"           - ML confidence < 60%
+        "ignored"        - the user chose Ignore for this exact file content
+                            at this path (devadara/ignore_list.py); nothing
+                            else is checked. Not a threat tier.
     """
     result = {
         "file_path": file_path,
@@ -140,6 +143,13 @@ def evaluate_file(file_path, known_bad_hashes, model, feature_columns, trusted_p
     if file_hash is None:
         return result
     result["hash"] = file_hash
+
+    # A human chose Ignore for exactly this content at exactly this path
+    # (Results page). Pinned to the fingerprint: any change to the file and
+    # it's scanned normally again - see ignore_list.py.
+    if ignore_list.is_ignored(file_path, file_hash):
+        result["tier"] = "ignored"
+        return result
 
     if file_hash in known_bad_hashes:
         result["tier"] = "known_bad"

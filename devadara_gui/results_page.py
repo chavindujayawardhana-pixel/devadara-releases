@@ -39,7 +39,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from devadara import quarantine, scan_log
+from devadara import ignore_list, quarantine, scan_log
+from devadara.hash_scanner import compute_sha256
 from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
 from devadara_gui import dialogs, theme
@@ -48,6 +49,9 @@ from devadara_gui.file_location import open_in_explorer
 from devadara_gui.process_guard import still_same_process
 
 THREAT_TIERS = ("known_bad", "malware", "suspicious")
+SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
+LARGE_FILE_BYTES = 200 * 1024 * 1024  # quarantine reads the whole file into memory
+
 SOURCE_LABELS = {
     "last_scan": "Last scan",
     "downloads_watch": "Downloads auto-scan",
@@ -291,6 +295,10 @@ class ResultsPage(QWidget):
 
         self._tab_group.idClicked.connect(self._stack.setCurrentIndex)
 
+        virus = self.tabs["Virus"]
+        self.quarantine_button = virus.add_action("Quarantine Checked", self.quarantine_checked, primary=True)
+        self.ignore_button = virus.add_action("Ignore Checked", self.ignore_checked)
+
         hidden = self.tabs["Hidden"]
         self.unhide_all_button = hidden.add_action("Unhide All", self.unhide_all, primary=True)
         self.unhide_checked_button = hidden.add_action("Unhide Checked", self.unhide_checked)
@@ -463,6 +471,128 @@ class ResultsPage(QWidget):
         shown = "; ".join(f"{os.path.basename(p) or p}: {r}" for p, r in refused[:limit])
         more = f" (+{len(refused) - limit} more)" if len(refused) > limit else ""
         return f"{len(refused)} skipped — {shown}{more}"
+
+    # ─── Virus tab ───
+
+    @staticmethod
+    def _quarantine_refusal(path):
+        if not path or not os.path.isfile(path):
+            return "the file no longer exists"
+        if _norm(path).startswith(SYSTEM_ROOT + os.sep):
+            return "it's a Windows component - quarantining it could break Windows"
+        return None
+
+    def _resolve_virus_item(self, item):
+        """Drop a dealt-with item from both places it can come from: the
+        last-scan store and the unattended scan log."""
+        if item.get("log_ids"):
+            scan_log.remove_findings(set(item["log_ids"]))
+        if item.get("from_store"):
+            self._store.remove_flagged(item["file_path"])
+
+    def quarantine_files(self, items, tab):
+        """Shared by the Virus tab and Startup Review: warn, then quarantine
+        each allowed file. Returns the items actually quarantined."""
+        allowed, refused = [], []
+        for item in items:
+            reason = self._quarantine_refusal(item["file_path"])
+            (allowed.append(item) if reason is None else refused.append((item["file_path"], reason)))
+        if not allowed:
+            tab.set_status("// " + self._refused_text(refused), theme.WARN)
+            return []
+        n = len(allowed)
+        message = ("This encrypts each file and moves it into DEVADARA's quarantine folder, so it "
+                   "can't be opened or run. Nothing is deleted - you can restore it later from the "
+                   "Quarantine tab.")
+        notes = []
+        large = [i for i in allowed if os.path.getsize(i["file_path"]) > LARGE_FILE_BYTES]
+        if large:
+            notes.append(f"{len(large)} large file(s): DEVADARA may pause while it encrypts them.")
+        if refused:
+            notes.append("Skipped, never touched: " + self._refused_text(refused))
+        if not dialogs.confirm(self, f"Quarantine {n} file(s)?", message, "Quarantine",
+                               items=[i["file_path"] for i in allowed], details="  ".join(notes)):
+            return []
+        done, in_use, failed = [], [], []
+        for item in allowed:
+            entry_id = quarantine.quarantine_file(
+                item["file_path"], file_hash=item.get("hash"), threat_name=item.get("threat"),
+                tier=item.get("tier"), source="results_page")
+            if entry_id is None:
+                failed.append(item)
+            elif os.path.exists(item["file_path"]):
+                # quarantine_file() made the encrypted copy but couldn't
+                # remove the original - usually because a program has it open.
+                in_use.append(item)
+            else:
+                done.append(item)
+        text = f"// quarantined {len(done)} file(s)"
+        if in_use:
+            text += (f" — {len(in_use)} still on disk (in use by a program?): an encrypted copy is in "
+                     "quarantine, but close the program and quarantine again")
+        if failed:
+            text += f" — {len(failed)} couldn't be quarantined (no access?)"
+        if refused:
+            text += " — " + self._refused_text(refused)
+        tab.set_status(text, theme.WARN if (in_use or failed) else theme.NEON)
+        return done
+
+    def quarantine_checked(self):
+        tab = self.tabs["Virus"]
+        checked = tab.checked_payloads()
+        if not checked:
+            tab.set_status("// tick at least one file first", theme.TEXT_DIM)
+            return
+        for item in self.quarantine_files(checked, tab):
+            self._resolve_virus_item(item)
+        self.refresh()  # the status line is kept
+
+    def _ignore_refusal(self, item):
+        path = item["file_path"]
+        if not os.path.isfile(path):
+            return "the file no longer exists"
+        current = compute_sha256(path)
+        if current is None:
+            return "the file can't be read"
+        if item.get("hash") and current != item["hash"]:
+            return "the file changed since it was flagged - scan it again first"
+        item["current_hash"] = current
+        return None
+
+    def ignore_checked(self):
+        tab = self.tabs["Virus"]
+        checked = tab.checked_payloads()
+        if not checked:
+            tab.set_status("// tick at least one file first", theme.TEXT_DIM)
+            return
+        allowed, refused = [], []
+        for item in checked:
+            reason = self._ignore_refusal(item)
+            (allowed.append(item) if reason is None else refused.append((item["file_path"], reason)))
+        if not allowed:
+            tab.set_status("// " + self._refused_text(refused), theme.WARN)
+            return
+        n = len(allowed)
+        message = ("DEVADARA will stop flagging these files. They stay where they are and are not "
+                   "changed. Only this exact content is ignored: if a file changes, it will be "
+                   "scanned again. Only ignore a file you trust.")
+        notes = []
+        known = sum(1 for i in allowed if i.get("tier") == "known_bad")
+        if known:
+            notes.append(f"WARNING: {known} of these matched DEVADARA's list of known threats.")
+        if refused:
+            notes.append("Skipped: " + self._refused_text(refused))
+        if not dialogs.confirm(self, f"Ignore {n} file(s)?", message, "Ignore",
+                               items=[i["file_path"] for i in allowed], details="  ".join(notes)):
+            return
+        for item in allowed:
+            ignore_list.add(item["file_path"], item["current_hash"], threat_name=item.get("threat"))
+            self._resolve_virus_item(item)
+        self.refresh()
+        text = f"// ignoring {n} file(s) from now on (only while their content stays the same)"
+        if refused:
+            text += " — " + self._refused_text(refused)
+        tab.set_status(text, theme.NEON)
 
     # ─── Quarantine tab ───
 
