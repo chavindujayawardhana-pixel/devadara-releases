@@ -10,7 +10,7 @@ target design this replicates.
 
 import os
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QElapsedTimer, QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication,
@@ -298,6 +298,10 @@ class TrayOrbitAnimator(QObject):
 
     FRAME_COUNT = 12
     FRAME_MS = 100
+    # A single-file auto-scan (e.g. one new PDF in Downloads) can finish in
+    # ~0.1s - before the first tick - so it would never visibly spin. Once
+    # started, the ring always completes at least one full loop.
+    MIN_SPIN_MS = FRAME_COUNT * FRAME_MS
     ICON_SIZES = (16, 24, 32)
     SCANNING_TOOLTIP = "DEVADARA — scanning…"
 
@@ -310,21 +314,37 @@ class TrayOrbitAnimator(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(self.FRAME_MS)
         self._timer.timeout.connect(self._next_frame)
+        self._spin_clock = QElapsedTimer()
+        self._stop_timer = QTimer(self)
+        self._stop_timer.setSingleShot(True)
+        self._stop_timer.timeout.connect(self._stop)
 
     def set_scanning(self, scanning):
         """Connected to ScanPage.scan_active_changed."""
         if self._layers is None:
             return
         if scanning:
+            self._stop_timer.stop()
+            if self._timer.isActive():
+                return  # still finishing the previous scan's minimum loop
             if self._frames is None:
                 self._frames = self._build_frames()
-            self._index = 0
+            self._index = 1  # frame 0 looks identical to the static icon
+            self._spin_clock.start()
             self._tray.setToolTip(self.SCANNING_TOOLTIP)
+            self._next_frame()  # visibly rotated now, not one tick later
             self._timer.start()
-        else:
-            self._timer.stop()
-            self._tray.setIcon(QIcon(ICON_PATH))
-            self._tray.setToolTip(TRAY_TOOLTIP)
+        elif self._timer.isActive():
+            remaining = self.MIN_SPIN_MS - self._spin_clock.elapsed()
+            if remaining > 0:
+                self._stop_timer.start(remaining)
+            else:
+                self._stop()
+
+    def _stop(self):
+        self._timer.stop()
+        self._tray.setIcon(QIcon(ICON_PATH))
+        self._tray.setToolTip(TRAY_TOOLTIP)
 
     def _build_frames(self):
         base, orbit = self._layers
