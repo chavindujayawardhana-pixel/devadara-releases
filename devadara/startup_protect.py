@@ -1,8 +1,16 @@
 """
 startup_protect.py
 
-The unattended entry point Windows launches at logon (see
-startup_registration.py for how it gets registered). Every other DEVADARA
+CLI-ONLY / MANUAL (via startup_protect_cli.py). Windows no longer launches
+this at logon - startup_registration.py now registers the GUI
+(gui_app.py --autostart), which does the same job: a startup sweep of
+Downloads, the Downloads/USB/behavior watchers, tray notifications instead
+of PowerShell toasts, and the same data/scan_log.jsonl entries (the
+result -> entry mapping lives in scan_log.record_scan_result() /
+record_behavior_alert(), shared by both). The description below is how
+this module itself still works when run by hand.
+
+Originally the unattended entry point Windows launched at logon. Every other DEVADARA
 tool so far is interactive - it asks which folder to scan, or asks "mark
 this as a confirmed threat? [y/N]" for every flagged file. None of that
 works when nothing runs until you log in and nobody is there to answer a
@@ -46,17 +54,11 @@ from devadara.memory import get_combined_known_bad_hashes
 from devadara.ml_scanner import load_model_and_features
 from devadara.notifier import notify
 from devadara.scan_engine import evaluate_file
-from devadara.scan_log import append_finding
+from devadara.scan_log import record_behavior_alert, record_scan_result
 from devadara.signature_scanner import load_trusted_publishers
 from devadara.usb_monitor import start_usb_monitoring
 
 DOWNLOADS_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads")
-
-# Tiers worth writing to the log. "trusted_signed", "safe", "not_pe", and
-# "unreadable" are not actionable findings - logging every clean file would
-# make the log useless for spotting what actually needs review.
-LOGGABLE_TIERS = {"known_bad", "malware", "suspicious"}
-
 
 def _log_if_notable(result, source, notify_immediately=False):
     """
@@ -69,24 +71,11 @@ def _log_if_notable(result, source, notify_immediately=False):
     download) - sweep_folder always passes False and summarizes instead,
     see module docstring for why.
     """
-    if result["tier"] not in LOGGABLE_TIERS:
+    if record_scan_result(result, source) is None:
         return None
 
-    ml = result.get("ml") or {}
-    signature = result.get("signature") or {}
-    append_finding(
-        source=source,
-        tier=result["tier"],
-        file_path=result["file_path"],
-        file_hash=result["hash"],
-        threat_name=result.get("threat_name"),
-        confidence=ml.get("confidence"),
-        publisher=signature.get("publisher"),
-        downgraded_from_malware=result.get("downgraded_from_malware", False),
-    )
-
     if notify_immediately:
-        confidence = ml.get("confidence")
+        confidence = (result.get("ml") or {}).get("confidence")
         detail = f" ({confidence:.0%} confidence)" if confidence is not None else ""
         notify(
             "DEVADARA - Suspicious file detected",
@@ -129,16 +118,7 @@ def _notify_sweep_summary(location_label, tier_counts):
 
 
 def _on_behavior_alert(alert_info):
-    suspects = [f"PID {s['pid']} ({s['name']})" for s in alert_info["suspect_processes"]]
-    append_finding(
-        source="behavior_alert",
-        tier="behavior_alert",
-        file_path=alert_info["folder"],
-        event_count=alert_info["event_count"],
-        window_seconds=alert_info["window_seconds"],
-        sample_files=alert_info["sample_files"],
-        suspect_processes=suspects,
-    )
+    record_behavior_alert(alert_info)
     print(f"[ALERT] Ransomware-like activity in '{alert_info['folder']}' - logged for review.")
     notify(
         "DEVADARA - Ransomware-like activity detected",

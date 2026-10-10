@@ -27,8 +27,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from devadara import scan_log
 from devadara_gui import theme
 from devadara_gui.auto_scan_controller import AutoScanController
+from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
 from devadara_gui.components import (
     NavItem, PageHeader, ScanOrbitLogo, load_orbit_layers, orbit_frame, scaled_image,
 )
@@ -43,6 +45,7 @@ from devadara_gui.scan_page import ScanPage
 ICON_PATH = theme.ICON_PATH
 
 TRAY_TOOLTIP = "DEVADARA — Antivirus Guard"
+TRAY_MESSAGE_MS = 10_000
 
 NAV_ITEMS = [
     ("▣", "Dashboard"),         # ▣
@@ -418,12 +421,56 @@ class MainWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_animator = TrayOrbitAnimator(self.tray_icon, self)
             self.scan_page.scan_active_changed.connect(self.tray_animator.set_scanning)
+        self.scan_page.auto_scan_flagged.connect(self._on_auto_scan_flagged)
+
+        # Behavior monitoring (alert only): log, popup, tray message. The
+        # popup's Suspend/Resume/Kill each need their own confirmation.
+        self.behavior_popup = BehaviorAlertPopup(parent=self)
+        self.auto_scan_controller.behavior_alert.connect(self._on_behavior_alert)
 
         # Logon auto-hide (see schedule_auto_hide) - only ever started for
         # an --autostart launch.
         self._auto_hide_timer = QTimer(self)
         self._auto_hide_timer.setSingleShot(True)
         self._auto_hide_timer.timeout.connect(self._on_auto_hide_timeout)
+
+    def schedule_boot_sweep(self, delay_ms):
+        """For a Windows-logon (--autostart) launch only: one Downloads
+        sweep through the normal scan queue, delay_ms after startup (well
+        after the model load), catching what arrived while the PC was off."""
+        QTimer.singleShot(delay_ms, self.scan_page.start_boot_sweep)
+
+    def _on_auto_scan_flagged(self, label, findings):
+        """Tray notification for an auto-scan's findings - only while the
+        window is hidden/minimized (otherwise the scan popup already shows
+        the result). Qt's own tray balloon, no PowerShell. Never acts on the
+        findings."""
+        if self.tray_icon is None or (self.isVisible() and not self.isMinimized()):
+            return
+        first = findings[0]
+        area = label.split(":", 1)[0]  # "Downloads" / "USB drive" / "Startup scan"
+        name = os.path.basename(first["file_path"])
+        more = f" and {len(findings) - 1} more" if len(findings) > 1 else ""
+        self.tray_icon.showMessage(
+            f"DEVADARA: {len(findings)} item(s) flagged",
+            f"{area}: {name} — {first['tier']}{more}. Open DEVADARA to review.",
+            QSystemTrayIcon.MessageIcon.Warning,
+            TRAY_MESSAGE_MS,
+        )
+
+    def _on_behavior_alert(self, alert):
+        scan_log.record_behavior_alert(alert)
+        # Tray message first: decided and sent before the popup is shown and
+        # takes focus, so the popup can't affect either.
+        if self.tray_icon is not None and (not self.isVisible() or self.isMinimized()):
+            folder = os.path.basename(os.path.normpath(alert["folder"])) or alert["folder"]
+            self.tray_icon.showMessage(
+                "DEVADARA: possible ransomware-like activity",
+                f"Unusually many file changes in {folder}. Open DEVADARA to review.",
+                QSystemTrayIcon.MessageIcon.Warning,
+                TRAY_MESSAGE_MS,
+            )
+        self.behavior_popup.show_alert(alert)
 
     def start_background_init(self):
         """Call right after show(). Loading the ML model is a real ~3-7s
@@ -489,6 +536,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.setContextMenu(menu)
 
         self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.messageClicked.connect(self._restore_from_tray)
         self.tray_icon.show()
 
     def _on_tray_activated(self, reason):
@@ -507,8 +555,7 @@ class MainWindow(QMainWindow):
 
     def _exit_app(self):
         self.scan_page.force_stop_running_scan()
-        self.auto_scan_controller.stop_downloads_watch()
-        self.auto_scan_controller.stop_usb_watch()
+        self.auto_scan_controller.stop_all_watches()
         if self.tray_icon is not None:
             self.tray_icon.hide()
         QApplication.instance().quit()
@@ -545,8 +592,7 @@ class MainWindow(QMainWindow):
         if self.tray_icon is None:
             # No tray to hide into - hiding would leave an invisible,
             # unreachable process, so close for real instead.
-            self.auto_scan_controller.stop_downloads_watch()
-            self.auto_scan_controller.stop_usb_watch()
+            self.auto_scan_controller.stop_all_watches()
             event.accept()
             return
 

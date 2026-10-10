@@ -2,9 +2,10 @@
 scan_log.py
 
 This is where DEVADARA writes down what it noticed while nobody was
-watching - specifically, everything startup_protect.py finds while running
-unattended at boot (see that module's docstring for why it can't just ask
-"mark as threat? [y/N]" the way the interactive CLIs do).
+watching - everything the GUI's auto-scans (Downloads/USB/startup sweep)
+and the CLI-only startup_protect.py find unattended (see that module's
+docstring for why it can't just ask "mark as threat? [y/N]" the way the
+interactive CLIs do).
 
 Findings are appended to data/scan_log.jsonl, one JSON object per line
 (easy to append to safely, easy to tail/grep by hand if you want to look
@@ -20,6 +21,10 @@ from datetime import datetime
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_PATH = os.path.join(PROJECT_ROOT, "data", "scan_log.jsonl")
+# Suspend/resume/kill actions a human confirmed on a behavior alert (GUI) -
+# kept OUT of scan_log.jsonl, which review-log walks as findings to confirm
+# or quarantine; an action record is history, not a finding.
+PROCESS_ACTIONS_PATH = os.path.join(PROJECT_ROOT, "data", "process_actions.jsonl")
 
 
 def append_finding(source, tier, file_path=None, file_hash=None, **extra):
@@ -56,6 +61,75 @@ def append_finding(source, tier, file_path=None, file_hash=None, **extra):
         return None
 
     return entry["id"]
+
+
+# scan_engine tiers worth recording. "trusted_signed", "safe", "not_pe" and
+# "unreadable" are not actionable - logging every clean file would make the
+# log useless for spotting what actually needs review.
+LOGGABLE_TIERS = {"known_bad", "malware", "suspicious"}
+
+
+def record_scan_result(result, source):
+    """
+    Log one scan_engine.evaluate_file() result if its tier is worth
+    reviewing - the one shared result -> entry mapping, used by both
+    startup_protect.py and the GUI's auto-scans so their entries can't
+    drift apart. Returns the tier if logged, None otherwise.
+    """
+    if result["tier"] not in LOGGABLE_TIERS:
+        return None
+
+    ml = result.get("ml") or {}
+    signature = result.get("signature") or {}
+    append_finding(
+        source=source,
+        tier=result["tier"],
+        file_path=result["file_path"],
+        file_hash=result["hash"],
+        threat_name=result.get("threat_name"),
+        confidence=ml.get("confidence"),
+        publisher=signature.get("publisher"),
+        downgraded_from_malware=result.get("downgraded_from_malware", False),
+    )
+    return result["tier"]
+
+
+def record_behavior_alert(alert_info):
+    """
+    Log one behavior_monitor alert - the one shared alert -> entry mapping,
+    used by both startup_protect.py and the GUI. Suspects are stored as
+    "PID n (name)" strings (extra keys a caller added, e.g. the GUI's
+    exe/create_time, are deliberately not logged). Returns the entry id.
+    """
+    suspects = [f"PID {s['pid']} ({s['name']})" for s in alert_info["suspect_processes"]]
+    return append_finding(
+        source="behavior_alert",
+        tier="behavior_alert",
+        file_path=alert_info["folder"],
+        event_count=alert_info["event_count"],
+        window_seconds=alert_info["window_seconds"],
+        sample_files=alert_info["sample_files"],
+        suspect_processes=suspects,
+    )
+
+
+def record_process_action(action, pid, name, exe, result):
+    """Append one human-confirmed suspend/resume/kill (or a refused attempt)
+    to PROCESS_ACTIONS_PATH. Never raises."""
+    entry = {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "action": action,
+        "pid": pid,
+        "name": name,
+        "exe": exe,
+        "result": result,
+    }
+    try:
+        os.makedirs(os.path.dirname(PROCESS_ACTIONS_PATH), exist_ok=True)
+        with open(PROCESS_ACTIONS_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        print(f"[WARNING] Could not write to process action log: {exc}")
 
 
 def read_findings():

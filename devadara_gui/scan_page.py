@@ -34,10 +34,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from devadara import scan_log
 from devadara.ml_scanner import load_model_and_features
 from devadara.usb_monitor import list_removable_drives
 
 from devadara_gui import theme
+from devadara_gui.auto_scan_controller import DOWNLOADS_FOLDER
 from devadara_gui.components import Button, Card, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow
 from devadara_gui.mini_form_popup import MiniFormPopup
 from devadara_gui.scan_worker import ScanWorker, format_elapsed, gather_persistence_entries
@@ -51,11 +53,20 @@ MODES = ["Quick Scan", "Full Scan", "Scan Downloads", "Scan USB"]
 # (manual) or _on_downloads_file_detected()/_on_usb_drive_detected() (auto),
 # and either started immediately or queued by _enqueue_or_start() if a scan
 # is already running. is_auto/auto_label drive which UI path _start_scan()/
-# _on_scan_finished() take - see their own docstrings.
+# _on_scan_finished() take - see their own docstrings. log_source, when set
+# ("downloads_watch"/"usb_watch"/"boot_sweep"), writes the request's
+# findings to data/scan_log.jsonl; manual scans leave it None and aren't
+# logged (the Dashboard's stat cards count unattended findings only).
 _ScanRequest = namedtuple("_ScanRequest", [
     "targets", "system_area_flags", "quick", "model", "feature_columns",
-    "persistence_entries", "is_auto", "auto_label",
-])
+    "persistence_entries", "is_auto", "auto_label", "log_source",
+], defaults=(None,))
+
+# The sign-in startup sweep of Downloads (see ScanPage.start_boot_sweep).
+# Full mode, like startup_protect.py's original boot sweep: Quick would
+# skip every non-executable, so YARA would never see a malicious script,
+# document or ransom note.
+BOOT_SWEEP_QUICK = False
 
 # A reactive single-file/single-drive auto-scan trigger has nothing to do
 # with registry/services/startup/process state - only the file or drive
@@ -101,6 +112,10 @@ class ScanPage(QWidget):
     # flicker between back-to-back scans. Covers manual and auto-triggered
     # scans alike, and stopped ones (ScanWorker always emits finished).
     scan_active_changed = Signal(bool)
+    # (auto_label, findings) - an auto-triggered scan (Downloads/USB/boot
+    # sweep) finished with at least one flagged file; MainWindow turns it
+    # into a tray notification when the window is hidden.
+    auto_scan_flagged = Signal(str, list)
 
     def __init__(self, navigate=None, main_window=None, controller=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
@@ -131,6 +146,7 @@ class ScanPage(QWidget):
         self._current_request = None
         self._pending_queue = deque()
         self._scan_active = False  # see scan_active_changed
+        self._current_findings = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 60)
@@ -453,6 +469,7 @@ class ScanPage(QWidget):
             [file_path], _NO_SYSTEM_AREA_FLAGS, False,
             self._controller.model, self._controller.feature_columns, [],
             is_auto=True, auto_label=f"Downloads: {os.path.basename(file_path)}",
+            log_source="downloads_watch",
         ))
 
     def _on_usb_drive_detected(self, drive_path):
@@ -462,6 +479,24 @@ class ScanPage(QWidget):
             [drive_path], _NO_SYSTEM_AREA_FLAGS, False,
             self._controller.model, self._controller.feature_columns, [],
             is_auto=True, auto_label=f"USB drive: {drive_path}",
+            log_source="usb_watch",
+        ))
+
+    def start_boot_sweep(self):
+        """The sign-in startup sweep (gui_app.py --autostart only, via
+        MainWindow.schedule_boot_sweep): one Downloads scan through the same
+        queue/popup/Stop path as any auto-scan, catching whatever arrived
+        while the PC was off. Skipped if the model isn't loaded yet or
+        there's no Downloads folder."""
+        if self._controller is None or self._controller.model is None:
+            return
+        if not os.path.isdir(DOWNLOADS_FOLDER):
+            return
+        self._enqueue_or_start(_ScanRequest(
+            [DOWNLOADS_FOLDER], _NO_SYSTEM_AREA_FLAGS, BOOT_SWEEP_QUICK,
+            self._controller.model, self._controller.feature_columns, [],
+            is_auto=True, auto_label="Startup scan: Downloads",
+            log_source="boot_sweep",
         ))
 
     def _enqueue_or_start(self, request):
@@ -478,6 +513,7 @@ class ScanPage(QWidget):
         Mini-Form popup (auto-shown, main window untouched) for an
         auto-triggered one."""
         self._current_request = request
+        self._current_findings = []
         if not self._scan_active:
             self._scan_active = True
             self.scan_active_changed.emit(True)
@@ -508,6 +544,7 @@ class ScanPage(QWidget):
         # (see mini_form_popup.py).
         self._worker.progress.connect(self._mini_popup.update_progress)
         self._worker.stats.connect(self._mini_popup.update_stats)
+        self._worker.findings.connect(self._on_findings)
         self._worker.finished.connect(self._on_scan_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
@@ -542,7 +579,24 @@ class ScanPage(QWidget):
         quick = self._current_mode == "Quick Scan"
         return targets, system_area_flags, quick
 
+    def _on_findings(self, findings):
+        # Emitted by the worker just before finished - see ScanWorker.findings.
+        self._current_findings = findings
+
+    def _record_findings(self, request, findings):
+        """Log an unattended request's findings and announce them - never
+        acts on them (no quarantine/delete; that stays a human decision)."""
+        if request is None or not findings:
+            return
+        if request.log_source:
+            for result in findings:
+                scan_log.record_scan_result(result, request.log_source)
+        if request.is_auto:
+            self.auto_scan_flagged.emit(request.auto_label, findings)
+
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
+        self._record_findings(self._current_request, self._current_findings)
+        self._current_findings = []
         is_auto = self._current_request is not None and self._current_request.is_auto
         if is_auto:
             self._mini_popup.show_auto_scan_result(stopped, checked, threats, hidden, elapsed)

@@ -19,6 +19,7 @@ unless the user clicks/types in it first. A second launch never starts
 its own timer (it exits above), and its SHOW cancels any pending one.
 """
 
+import multiprocessing
 import sys
 
 from PySide6.QtGui import QFont
@@ -36,6 +37,11 @@ SINGLE_INSTANCE_SERVER_NAME = "DevadaraVirusGuard-SingleInstance"
 # hiding itself to the tray - long enough to see it started, short enough
 # not to sit in the way. A manual launch never auto-hides.
 AUTOSTART_HIDE_DELAY_MS = 10_000
+
+# A Windows-logon launch also sweeps Downloads once, this long after
+# startup - after sign-in and the ML model load have settled - catching
+# anything that arrived while the PC was off. A manual launch never does.
+BOOT_SWEEP_DELAY_MS = 60_000
 
 
 def _notify_running_instance():
@@ -66,6 +72,11 @@ def _consume_and_show(socket, window):
 
 
 def main():
+    # The behavior monitor's suspect finder runs in a spawned child process
+    # (devadara.behavior_monitor). A no-op when run as a script; needed if
+    # this app is ever packaged as a frozen .exe, or the child would start
+    # a second copy of the GUI instead.
+    multiprocessing.freeze_support()
     autostart = AUTOSTART_FLAG in sys.argv[1:]
     app = QApplication(sys.argv)
     app.setFont(QFont(theme.FONT_FALLBACKS, 10))
@@ -86,6 +97,7 @@ def main():
     window.start_background_init()
     if autostart:
         window.schedule_auto_hide(AUTOSTART_HIDE_DELAY_MS)
+        window.schedule_boot_sweep(BOOT_SWEEP_DELAY_MS)
 
     sys.exit(app.exec())
 

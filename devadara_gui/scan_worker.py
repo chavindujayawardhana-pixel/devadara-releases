@@ -127,6 +127,11 @@ class ScanWorker(QObject):
     progress = Signal(str, int)                # current_label, checked
     stats = Signal(int, int, int)              # checked, threats, hidden
     log_line = Signal(str)
+    # Every flagged scan_engine result (THREAT_TIERS), one per file, sent
+    # once just before finished - including from a stopped scan, since
+    # whatever it found before stopping is still real. Used to log
+    # auto-scan findings and raise the hidden-window tray notification.
+    findings = Signal(list)
     finished = Signal(bool, int, int, int, float)  # stopped_early, checked, threats, hidden, elapsed_seconds
 
     def __init__(self, targets, system_area_flags, quick, model, feature_columns,
@@ -161,6 +166,7 @@ class ScanWorker(QObject):
 
         known_bad_hashes = get_combined_known_bad_hashes()
         trusted_publishers = load_trusted_publishers()
+        self._flagged = []
 
         suspicious_processes = []
         if self._system_area_flags.get("memory_processes"):
@@ -193,6 +199,7 @@ class ScanWorker(QObject):
                 on_progress=on_progress, should_stop=self._should_stop, progress_every_n_files=5,
             )
             checked += outcome["files_scanned"]
+            self._flagged.extend(outcome["known_bad_findings"] + outcome["to_review"])
             threats += len(outcome["known_bad_findings"]) + len(outcome["to_review"])
             hidden += len(outcome["hidden_files"])
             if outcome["interrupted"]:
@@ -217,6 +224,10 @@ class ScanWorker(QObject):
             )
 
         elapsed = time.time() - start_time
+        unique = {}
+        for result in self._flagged:
+            unique.setdefault(result["file_path"], result)
+        self.findings.emit(list(unique.values()))
         self.finished.emit(stopped, checked, threats, hidden, elapsed)
 
     def _evaluate_entries(self, entries, get_path, get_label, known_bad_hashes, model,
@@ -274,6 +285,7 @@ class ScanWorker(QObject):
                     checked += 1
                     if result["tier"] in THREAT_TIERS:
                         threats += 1
+                        self._flagged.append(result)
                 else:
                     entry["scan"] = None
 

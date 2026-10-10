@@ -27,11 +27,13 @@ import os
 
 from PySide6.QtCore import QObject, Signal
 
+from devadara.behavior_monitor import start_monitoring as start_behavior_monitoring
 from devadara.downloads_monitor import start_monitoring_downloads
 from devadara.ml_scanner import load_model_and_features
 from devadara.usb_monitor import start_usb_monitoring
 
 from devadara_gui.config_store import ConfigStore
+from devadara_gui.process_guard import describe_suspect
 
 DOWNLOADS_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads")
 
@@ -39,6 +41,10 @@ DOWNLOADS_FOLDER = os.path.join(os.path.expanduser("~"), "Downloads")
 class AutoScanController(QObject):
     downloads_file_detected = Signal(str)
     usb_drive_detected = Signal(str)
+    # behavior_monitor's alert_info dict (ransomware-like burst of file
+    # changes in Downloads), each suspect enriched by describe_suspect().
+    # Alert only - nothing here ever acts on a process.
+    behavior_alert = Signal(dict)
     # True while at least one watcher is actually running. First emitted
     # at the end of load_model() (the sidebar shows "STARTING..." until
     # then, never "ACTIVE"), then on every watcher start/stop.
@@ -51,6 +57,7 @@ class AutoScanController(QObject):
         self.feature_columns = None
         self._downloads_observer = None
         self._usb_monitor = None
+        self._behavior_observer = None
 
     def load_model(self):
         """Must run on the GUI thread - see module docstring. Starts
@@ -67,9 +74,12 @@ class AutoScanController(QObject):
             self.start_downloads_watch()
         if self.config_store.get("usb_autoscan_enabled", True):
             self.start_usb_watch()
+        if self.config_store.get("behavior_monitor_enabled", True):
+            self.start_behavior_watch()
 
     def is_realtime_active(self):
-        return self._downloads_observer is not None or self._usb_monitor is not None
+        return (self._downloads_observer is not None or self._usb_monitor is not None
+                or self._behavior_observer is not None)
 
     def _emit_realtime_state(self):
         self.realtime_state_changed.emit(self.is_realtime_active())
@@ -105,6 +115,28 @@ class AutoScanController(QObject):
         monitor.join()
         self._emit_realtime_state()
 
+    def start_behavior_watch(self):
+        if self._behavior_observer is not None:
+            return
+        if not os.path.isdir(DOWNLOADS_FOLDER):
+            print(f"[WARNING] Downloads folder not found, skipping behavior monitoring: {DOWNLOADS_FOLDER}")
+            return
+        self._behavior_observer = start_behavior_monitoring(DOWNLOADS_FOLDER, self._handle_behavior_alert)
+        self._emit_realtime_state()
+
+    def stop_behavior_watch(self):
+        if self._behavior_observer is None:
+            return
+        observer, self._behavior_observer = self._behavior_observer, None
+        observer.stop()
+        observer.join()
+        self._emit_realtime_state()
+
+    def stop_all_watches(self):
+        self.stop_downloads_watch()
+        self.stop_usb_watch()
+        self.stop_behavior_watch()
+
     # ─── watcher callbacks - fire on a background thread, do minimal work ───
 
     def _handle_new_download(self, file_path):
@@ -116,5 +148,15 @@ class AutoScanController(QObject):
     def _handle_drive_connected(self, drive_path):
         try:
             self.usb_drive_detected.emit(drive_path)
+        except Exception:
+            pass
+
+    def _handle_behavior_alert(self, alert_info):
+        # Snapshot each suspect's identity (path + start time) right now, so
+        # a later Suspend/Kill can refuse a PID Windows has since reused.
+        try:
+            alert = dict(alert_info)
+            alert["suspect_processes"] = [describe_suspect(s) for s in alert_info["suspect_processes"]]
+            self.behavior_alert.emit(alert)
         except Exception:
             pass

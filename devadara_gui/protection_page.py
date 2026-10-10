@@ -1,21 +1,22 @@
 """
 protection_page.py
 
-The Protection page - the Downloads/USB Auto-Scan toggles (Phase 3c-2)
-and the Windows Startup toggle (Phase 3d). Real-Time Protection master
-switch and Behavior Monitoring were part of an earlier, unrelated design
-(see dump_services.txt/dump_pages.txt from before the GUI rewrite) and are
-out of scope here - this page only covers what's actually wired up.
+The Protection page - the Downloads/USB Auto-Scan toggles (Phase 3c-2),
+the Behavior Monitoring toggle (Phase 4) and the Windows Startup toggle
+(Phase 3d). A Real-Time Protection master switch was part of an earlier,
+unrelated design (see dump_services.txt/dump_pages.txt from before the GUI
+rewrite) and is out of scope - this page only covers what's wired up.
 
-The Auto-Scan toggles read their initial state from
-AutoScanController.config_store and, on change, persist it there and
+The Auto-Scan and Behavior Monitoring toggles read their initial state
+from AutoScanController.config_store and, on change, persist it there and
 start/stop the matching watcher on the controller - never a fake/demo
 flag. The Windows Startup toggle has no config flag of its own: the HKCU
 Run-key entry itself (devadara.startup_registration) is the source of
 truth, so it always matches what Task Manager's Startup Apps tab shows.
 """
 
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from devadara import startup_registration
 from devadara_gui.components import ModuleToggleCard, PageHeader
@@ -26,7 +27,11 @@ class ProtectionPage(QWidget):
         super().__init__(parent)
         self._controller = controller
 
-        layout = QVBoxLayout(self)
+        # Four cards don't fit the window's minimum height (560) at their own
+        # minimum height - without scrolling, Qt squeezes them until title
+        # and description overlap. At normal sizes nothing scrolls.
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(40, 30, 40, 60)
         layout.setSpacing(20)
 
@@ -48,6 +53,15 @@ class ProtectionPage(QWidget):
         self._usb_card.toggled.connect(self._on_usb_toggled)
         layout.addWidget(self._usb_card)
 
+        self._behavior_card = ModuleToggleCard(
+            "Behavior Monitoring",
+            "Warns when many files in Downloads change very fast — a possible sign of "
+            "ransomware. Never acts on its own.",
+            initial_checked=controller.config_store.get("behavior_monitor_enabled", True),
+        )
+        self._behavior_card.toggled.connect(self._on_behavior_toggled)
+        layout.addWidget(self._behavior_card)
+
         # This page is built inside MainWindow(), before gui_app.py runs
         # startup_sync for the very first time - so on a first-ever launch
         # the entry isn't registered *yet* but is about to be (default ON).
@@ -62,6 +76,15 @@ class ProtectionPage(QWidget):
         layout.addWidget(self._startup_card)
 
         layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(scroll)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -88,6 +111,13 @@ class ProtectionPage(QWidget):
             self._controller.start_usb_watch()
         else:
             self._controller.stop_usb_watch()
+
+    def _on_behavior_toggled(self, checked):
+        self._controller.config_store.set("behavior_monitor_enabled", checked)
+        if checked:
+            self._controller.start_behavior_watch()
+        else:
+            self._controller.stop_behavior_watch()
 
     def _on_startup_toggled(self, checked):
         if checked:

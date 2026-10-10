@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 DEVADARA is a Windows-only antivirus/EDR tool written in Python. It has no
 formal package structure (no setup.py/pyproject.toml) — the `devadara/`
-package holds all detection logic, and each top-level `*_cli.py` script is a
-thin, manually-run interactive entry point over that logic. There is
-currently **no GUI** in the repo (it was deliberately removed on
-2026-09-18 — "Remove GUI for full restart — backend preserved" — to be
-rebuilt later; don't assume one exists unless you see it).
+package holds all detection logic, each top-level `*_cli.py` script is a
+thin, manually-run interactive entry point over that logic, and
+`devadara_gui/` (launched by `gui_app.py`) is the PySide6 desktop app over
+the same logic — see "The GUI" below. (The original GUI was removed on
+2026-09-18 and rebuilt from scratch; `devadara_gui/` is the rebuild.)
 
 ## Running things
 
@@ -20,6 +20,8 @@ on `devadara/` being resolvable from the working directory, or on the
 `*_cli.py` script's own directory being on `sys.path`):
 
 ```
+venv\Scripts\python.exe gui_app.py                # the desktop app (single instance; X hides to the tray)
+venv\Scripts\pythonw.exe gui_app.py --autostart   # what Windows runs at sign-in: auto-hides, startup scan after 60 s
 venv\Scripts\python.exe scan_cli.py              # hash-scan a folder, prompts to quarantine matches
 venv\Scripts\python.exe ml_scan_cli.py            # ML layer only, in isolation (no hash/signature)
 venv\Scripts\python.exe downloads_scan_cli.py     # watch Downloads, full pipeline on every new file
@@ -44,12 +46,45 @@ without doing anything actually harmful.
 There is no pytest suite. `tests/simulate_ransomware.py` is a manual
 integration script, not an automated test.
 
+## The GUI (`devadara_gui/`)
+
+`gui_app.py` is the entry point (single-instance guard, `--autostart`
+handling, `multiprocessing.freeze_support()`). `main_window.py` holds
+`MainWindow`: sidebar + page stack (Dashboard, Scan, Protection; Results and
+Settings are still placeholders), the tray icon, and the scan-running orbit
+animation (`components.ScanOrbitLogo` in the sidebar, `TrayOrbitAnimator`
+on the tray; layers `assets/app_icon_base.png` + `app_icon_orbit.png`).
+Colours/sizes are tokens in `theme.py` — don't add new colours.
+
+- **Scanning** — `scan_page.py` queues every scan (manual, Downloads/USB
+  auto-scan, the `--autostart` startup sweep) and runs one at a time in a
+  `scan_worker.ScanWorker` on a `QThread`, always through
+  `scan_engine.evaluate_file()`. Two calls must stay on the GUI thread
+  (they hang on a QThread on this machine): loading the ML model and
+  `persistence_scanner.list_persistence_entries()` — see `scan_worker.py`.
+  Auto-scan findings are logged to `data/scan_log.jsonl` (`log_source` on
+  the request; manual scans are not logged) and raise a tray message while
+  the window is hidden.
+- **Watchers** — `auto_scan_controller.AutoScanController` wraps
+  `downloads_monitor`, `usb_monitor` and `behavior_monitor`; each is a
+  Protection-page toggle saved in `data/gui_state.json` (`config_store.py`)
+  and counts toward the sidebar's REAL-TIME status. Watcher callbacks fire
+  on background threads and only emit Qt signals.
+- **Behavior alerts** — `behavior_alert_popup.py` shows "possible
+  ransomware-like activity" with the suspected programs (best-effort; often
+  empty on a busy PC). Suspend/Resume/Kill each need a confirmation dialog
+  and go through `process_guard.ProcessGuard`, which refuses Windows' own
+  processes, anything under `%SystemRoot%`, DEVADARA itself and recycled
+  PIDs (start time re-checked). Every attempt is logged to
+  `data/process_actions.jsonl`.
+
 ## Architecture: the detection pipeline
 
 `devadara/scan_engine.py::evaluate_file()` is the single pipeline every
 scanning entry point funnels through (`usb_scan_cli.py`,
 `downloads_scan_cli.py`, `persistence_scan_cli.py`, `process_scan_cli.py`,
-`full_drive_scan_cli.py`/`drive_scanner.py`, `startup_protect.py`) — it's
+`full_drive_scan_cli.py`/`drive_scanner.py`, `startup_protect.py`, the
+GUI's `devadara_gui/scan_worker.py`) — it's
 implemented exactly once and must stay that way. Four layers run in a fixed
 order, each only firing if the previous one didn't already reach a verdict:
 
@@ -90,7 +125,10 @@ Every layer that shells out to an external process (PowerShell, yara64.exe)
 binds untrusted input (file paths) as a separate process argument /
 parameter, never string-concatenated into command text — preserve this
 pattern in any new shell-out code; it's what prevents a malicious filename
-from becoming a command injection vector.
+from becoming a command injection vector. Every such call also passes
+`**hidden_process.hidden_window_kwargs()` (`CREATE_NO_WINDOW` + `SW_HIDE`
+on Windows, `{}` elsewhere) — under `pythonw` there's no parent console, so
+without it each child pops up a visible console window.
 
 A failure inside any one layer (locked file, missing binary, timeout)
 degrades to "this layer found nothing" rather than raising or aborting the
@@ -125,24 +163,32 @@ pipeline.
 - **`memory.py`** / **`scan_log.py`** — `memory.py` is the growing
   confirmed-threat hash list (`data/memory_hashes.json`) fed back into the
   hash-check layer; `scan_log.py` is the append-only unattended-findings
-  log (`data/scan_log.jsonl`) that `startup_protect.py` writes to instead
-  of prompting, since nobody's there to answer a prompt during unattended
-  startup.
-- **`startup_registration.py`** / **`startup_protect.py`** — registers
-  DEVADARA under the per-user `HKCU...\Run` key (no admin rights needed,
-  visible/removable via Task Manager's Startup Apps tab) to launch
-  `startup_protect_cli.py` via `pythonw.exe` at logon; that unattended path
-  never auto-confirms a threat, it only logs to `scan_log.jsonl` for later
-  review via `startup_cli.py review-log`.
+  log (`data/scan_log.jsonl`) written instead of prompting, since nobody's
+  there to answer a prompt. Entries are built only by
+  `scan_log.record_scan_result()` / `record_behavior_alert()`, shared by the
+  GUI and `startup_protect.py` so the format can't drift; the Dashboard's
+  counts and `startup_cli.py review-log` read it. Confirmed process actions
+  go to a separate `data/process_actions.jsonl` (not findings).
+- **`startup_registration.py`** — registers DEVADARA under the per-user
+  `HKCU...\Run` key (no admin rights needed, visible/removable via Task
+  Manager's Startup Apps tab) to launch `gui_app.py --autostart` via
+  `pythonw.exe` at logon. That unattended path never auto-confirms a
+  threat: it scans, logs to `scan_log.jsonl` and notifies, for later review
+  via `startup_cli.py review-log`.
+- **`startup_protect.py`** / **`startup_protect_cli.py`** — CLI-only /
+  manual now (no longer launched at logon): the older console version of
+  the same startup sweep + watchers, notifying via PowerShell toasts
+  (`notifier.py`).
 
 ## Project rules worth preserving
 
 - **Never auto-confirm a threat.** Every destructive/consequential action
   (quarantine, kill/suspend a process, delete-permanently) requires an
   explicit human "y" (or, for `quarantine_cli.py delete`, a typed `DELETE`)
-  at an interactive CLI prompt. The one unattended path
-  (`startup_protect.py`) deliberately only *logs* findings — it never acts
-  on them.
+  at an interactive CLI prompt — or, in the GUI, an explicit click in a
+  confirmation dialog whose default button is Cancel. Unattended paths (GUI
+  auto-scans, the startup sweep, behavior alerts, `startup_protect.py`)
+  deliberately only *log and notify* — they never act on a finding.
 - **Train once, bundle, never retrain automatically.** `train_model.py` is
   a manual, one-time script; nothing else in the app calls it, and it must
   stay that way.

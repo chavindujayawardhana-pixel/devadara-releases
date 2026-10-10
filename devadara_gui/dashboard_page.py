@@ -84,6 +84,19 @@ class DashboardPage(QWidget):
         layout.addWidget(self._build_quick_actions())
         layout.addStretch(1)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_stats()
+
+    def refresh_stats(self):
+        """Re-read data/scan_log.jsonl - auto-scans append to it while the
+        app runs, so the counts read at construction go stale."""
+        stats = _gather_stats()
+        self._threats_card.set_value(stats["threats"])
+        self._suspicious_card.set_value(
+            stats["suspicious"], variant="warn" if stats["suspicious"] else "default",
+        )
+
     def set_realtime_state(self, active):
         """Connected to AutoScanController.realtime_state_changed."""
         self._apply_realtime_state("active" if active else "off")
@@ -97,11 +110,13 @@ class DashboardPage(QWidget):
         row = QHBoxLayout()
         row.setSpacing(12)
         row.addWidget(StatCard("Files Scanned", stats["files_scanned"]))
-        row.addWidget(StatCard("Threats Detected", stats["threats"]))
-        row.addWidget(StatCard(
+        self._threats_card = StatCard("Threats Detected", stats["threats"])
+        row.addWidget(self._threats_card)
+        self._suspicious_card = StatCard(
             "Suspicious Items", stats["suspicious"],
             variant="warn" if stats["suspicious"] else "default",
-        ))
+        )
+        row.addWidget(self._suspicious_card)
         row.addWidget(StatCard("Last Full Scan", stats["last_full_scan"]))
         return row
 

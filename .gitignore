@@ -8,6 +8,7 @@ data/gui_state.json
 data/gui_activity_log.json
 data/memory_hashes.json
 data/scan_log.jsonl
+data/process_actions.jsonl
 data/scan_exceptions.json
 data/quarantine_index.json
 data/quarantine/
