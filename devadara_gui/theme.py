@@ -12,8 +12,16 @@ QSS: glow_effect() returns a QGraphicsDropShadowEffect per widget, and
 letter_spaced_font() returns a QFont with Qt's native letter-spacing applied.
 """
 
+import os
+
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+# Lives here (not main_window.py, the only other place that needs it) so
+# devadara_gui/mini_form_popup.py can also import it without creating a
+# main_window -> scan_page -> mini_form_popup -> main_window import cycle.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
 
 # ─── Color tokens (exact hex from the mockup's :root) ───
 BG = "#0a0a0f"
@@ -353,6 +361,27 @@ def build_stylesheet():
 
         QLabel#pageSub {{
             color: {TEXT_DIM};
+        }}
+
+        /* ─── Mini-Form popup ─── */
+        QFrame#miniWindowPanel {{
+            background: rgba(10, 10, 15, 0.95);
+            border: 1px solid {BORDER};
+            border-radius: 6px;
+        }}
+
+        QFrame#miniHeaderDivider {{
+            background: transparent;
+            border: none;
+            border-bottom: 1px dashed {BORDER};
+            max-height: 1px;
+            min-height: 1px;
+        }}
+
+        QFrame#miniStatsBox {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
         }}
 
         /* ─── Scrollbars ─── */

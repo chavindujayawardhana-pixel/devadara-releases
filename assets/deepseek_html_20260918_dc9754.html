@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>DEVADARA — Mini Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Consolas', 'SF Mono', 'Courier New', monospace; }
+
+  :root {
+    --bg: #0a0a0f;
+    --panel: #12122099;
+    --border: #1a3a3a;
+    --neon: #00ffaa;
+    --neon-dim: #00cc88;
+    --cyan: #00e5ff;
+    --danger: #ff3355;
+    --warn: #ffcc00;
+    --text: #d4fff0;
+    --text-dim: #5a8a7a;
+    --text-mute: #3a5a4a;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+  }
+
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0, 255, 170, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0, 255, 170, 0.04) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 170, 0.02) 2px,
+      rgba(0, 255, 170, 0.02) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  /* ─── MINI WINDOW ─── */
+  .mini-window {
+    position: relative;
+    z-index: 1;
+    width: 520px;
+    background: rgba(10, 10, 15, 0.95);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 20px;
+    box-shadow: 0 0 40px rgba(0, 255, 170, 0.15), inset 0 0 20px rgba(0, 255, 170, 0.05);
+    backdrop-filter: blur(10px);
+  }
+
+  .mini-window::before, .mini-window::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--neon);
+    opacity: 0.7;
+  }
+  .mini-window::before { top: -1px; left: -1px; border-right: none; border-bottom: none; }
+  .mini-window::after { bottom: -1px; right: -1px; border-left: none; border-top: none; }
+
+  /* Header - වම් පැත්තෙන් අයිකන් එක එන විදිහට වෙනස් කරලා තියෙනවා */
+  .mini-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px dashed var(--border);
+  }
+
+  .title-group {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* අයිකන් එකයි ටෙක්ස්ට් එකයි අතර පරතරය */
+  }
+
+  /* ඔබ එවපු අයිකන් එක පෙන්නන තැන */
+  .mini-logo {
+    width: 28px;
+    height: 28px;
+    filter: drop-shadow(0 0 8px var(--neon));
+    border-radius: 6px;
+  }
+
+  .mini-title {
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: var(--neon);
+    text-shadow: 0 0 10px var(--neon);
+    text-transform: uppercase;
+  }
+
+  .close-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-mute);
+    font-size: 16px;
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  .close-btn:hover { color: var(--danger); text-shadow: 0 0 10px var(--danger); }
+
+  /* Path */
+  .mini-path {
+    font-size: 11px;
+    color: var(--cyan);
+    margin-bottom: 16px;
+    padding: 8px 10px;
+    background: rgba(0, 229, 255, 0.05);
+    border-left: 2px solid var(--cyan);
+    word-break: break-all;
+    letter-spacing: 0.5px;
+  }
+  .mini-path::before { content: '> '; color: var(--neon); }
+
+  /* Progress */
+  .mini-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .mini-percent {
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--neon);
+    text-shadow: 0 0 12px var(--neon);
+    min-width: 55px;
+  }
+
+  .mini-progress-bar {
+    flex: 1;
+    height: 6px;
+    background: rgba(0, 255, 170, 0.08);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .mini-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--neon), var(--cyan));
+    box-shadow: 0 0 12px var(--neon);
+    transition: width 0.2s;
+  }
+
+  /* Stats */
+  .mini-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    background: rgba(0, 0, 0, 0.4);
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+
+  .stat-item { text-align: center; }
+
+  .stat-label {
+    font-size: 9px;
+    color: var(--text-mute);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .stat-value {
+    font-size: 14px;
+    font-weight: 900;
+    color: var(--text);
+  }
+  .stat-value.danger { color: var(--danger); text-shadow: 0 0 10px var(--danger); }
+  .stat-value.warn { color: var(--warn); text-shadow: 0 0 10px var(--warn); }
+  .stat-value.neon { color: var(--neon); text-shadow: 0 0 10px var(--neon); }
+
+  /* Buttons */
+  .mini-buttons {
+    display: flex;
+    gap: 10px;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    cursor: pointer;
+    text-transform: uppercase;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .btn:hover {
+    border-color: var(--neon);
+    color: var(--neon);
+    box-shadow: 0 0 14px rgba(0, 255, 170, 0.3);
+  }
+
+  .btn.primary {
+    background: var(--neon);
+    color: #000;
+    border-color: var(--neon);
+    box-shadow: 0 0 20px rgba(0, 255, 170, 0.4);
+  }
+
+  .btn.primary:hover {
+    box-shadow: 0 0 32px var(--neon);
+    background: #00ffcc;
+  }
+</style>
+</head>
+<body>
+
+  <!-- Mini Scanner Window -->
+  <div class="mini-window" id="miniWindow">
+    <div class="mini-header">
+      
+      <!-- අයිකන් එකයි ටෙක්ස්ට් එකයි එකට තියෙන කොටස -->
+      <div class="title-group">
+        
+        <!-- 
+          මෙතන තමයි අයිකන් එක දාන්නේ. 
+          ඔබ එවපු පින්තූරය 'logo.png' කියලා සේව් කරලා තියෙනවා නම්, 
+          පහත img ටැග් එක පාවිච්චි කරන්න:
+          <img src="logo.png" class="mini-logo" alt="Logo">
+          
+          (පින්තූරය නැතුවත් පෙනුම බලන්න මම SVG එකක් දාලා තියෙනවා)
+        -->
+        <svg class="mini-logo" viewBox="0 0 100 100">
+          <rect width="100" height="100" rx="20" fill="#0a1a10" stroke="#00ffaa" stroke-width="2" opacity="0.8"/>
+          <path d="M 20 50 Q 50 15 80 50" fill="none" stroke="#00ffaa" stroke-width="3" stroke-linecap="round"/>
+          <path d="M 20 50 Q 50 85 80 50" fill="none" stroke="#00ffaa" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="75" cy="25" r="4" fill="#00ffaa"/>
+          <circle cx="25" cy="75" r="4" fill="#00ffaa"/>
+          <path d="M 15 50 Q 50 15 85 50 Q 50 35 15 50 Z" fill="#d4fff0"/>
+          <path d="M 15 50 Q 50 85 85 50 Q 50 65 15 50 Z" fill="#d4fff0"/>
+          <circle cx="50" cy="50" r="18" fill="#00ffaa" opacity="0.8"/>
+          <circle cx="50" cy="50" r="14" fill="#00ffaa"/>
+          <circle cx="50" cy="50" r="8" fill="#000"/>
+          <circle cx="46" cy="46" r="3" fill="#fff"/>
+        </svg>
+
+        <div class="mini-title">// DEVADARA SCANNING</div>
+      </div>
+
+      <button class="close-btn" onclick="closeMini()">✕</button>
+    </div>
+
+    <div class="mini-path" id="miniPath">C:\Users\user\AppData\Local\Temp\cache.dat</div>
+
+    <div class="mini-progress-row">
+      <div class="mini-percent" id="miniPercent">94%</div>
+      <div class="mini-progress-bar">
+        <div class="mini-progress-fill" id="miniFill" style="width: 94%;"></div>
+      </div>
+    </div>
+
+    <div class="mini-stats">
+      <div class="stat-item">
+        <div class="stat-label">// Files Checked</div>
+        <div class="stat-value neon" id="miniFiles">810</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">// Threats</div>
+        <div class="stat-value danger" id="miniThreats">2</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-label">// Hidden</div>
+        <div class="stat-value warn" id="miniHidden">1</div>
+      </div>
+    </div>
+
+    <div class="mini-buttons">
+      <button class="btn" onclick="showToast('Scan stopped')">Stop</button>
+      <button class="btn primary" onclick="showToast('Opening details...')">Details >></button>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" style="position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px); background: rgba(10,10,15,0.95); border: 1px solid var(--neon); color: var(--neon); padding: 12px 24px; border-radius: 4px; font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; box-shadow: 0 0 32px rgba(0,255,170,0.5); transition: transform 0.4s; z-index: 9999; pointer-events: none;">
+    // READY
+  </div>
+
+<script>
+  let progress = 94;
+  let files = 810;
+  let threats = 2;
+  let hidden = 1;
+  let running = true;
+
+  const paths = [
+    'C:\\Windows\\System32\\kernel32.dll',
+    'C:\\Users\\user\\Documents\\report.docx',
+    'C:\\Program Files\\Common Files\\system\\ole32.dll',
+    'C:\\Windows\\SysWOW64\\advapi32.dll',
+    'C:\\Users\\user\\Downloads\\installer.msi'
+  ];
+
+  function updateScan() {
+    if (!running) return;
+
+    if (progress < 100) {
+      progress += Math.random() * 2;
+      if (progress > 100) progress = 100;
+      
+      files += Math.floor(Math.random() * 10) + 5;
+      
+      if (Math.random() < 0.05) hidden++;
+      if (Math.random() < 0.02) threats++;
+
+      document.getElementById('miniPercent').textContent = Math.floor(progress) + '%';
+      document.getElementById('miniFill').style.width = progress + '%';
+      document.getElementById('miniFiles').textContent = files;
+      document.getElementById('miniThreats').textContent = threats;
+      document.getElementById('miniHidden').textContent = hidden;
+      
+      const randomPath = paths[Math.floor(Math.random() * paths.length)];
+      document.getElementById('miniPath').textContent = randomPath;
+
+      if (progress >= 100) {
+        document.getElementById('miniPercent').textContent = '100%';
+        document.getElementById('miniPath').textContent = 'Scan Complete.';
+        running = false;
+        showToast('Scan Complete');
+      }
+    }
+  }
+
+  setInterval(updateScan, 300);
+
+  function closeMini() {
+    document.getElementById('miniWindow').style.display = 'none';
+    showToast('Window Closed');
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = '// ' + msg.toUpperCase();
+    t.style.transform = 'translateX(-50%) translateY(0)';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      t.style.transform = 'translateX(-50%) translateY(-100px)';
+    }, 2000);
+  }
+</script>
+</body>
+</html>
