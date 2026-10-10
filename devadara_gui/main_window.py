@@ -31,6 +31,8 @@ from devadara import scan_log
 from devadara_gui import theme
 from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
+from devadara_gui.process_guard import ProcessGuard
+from devadara_gui.results_store import ResultsStore
 from devadara_gui.components import (
     NavItem, PageHeader, ScanOrbitLogo, load_orbit_layers, orbit_frame, scaled_image,
 )
@@ -381,6 +383,11 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(theme.build_stylesheet())
 
         self.auto_scan_controller = AutoScanController(self)
+        # One ProcessGuard for the whole app (behavior popup + Results page),
+        # so "suspended by DEVADARA" - what Resume requires - is shared.
+        self.process_guard = ProcessGuard()
+        # The last manual scan's results, in memory only (Results page).
+        self.results_store = ResultsStore(self)
 
         central = BackgroundCanvas()
         layout = QHBoxLayout(central)
@@ -422,10 +429,11 @@ class MainWindow(QMainWindow):
             self.tray_animator = TrayOrbitAnimator(self.tray_icon, self)
             self.scan_page.scan_active_changed.connect(self.tray_animator.set_scanning)
         self.scan_page.auto_scan_flagged.connect(self._on_auto_scan_flagged)
+        self.scan_page.manual_scan_results.connect(self.results_store.set_last_scan)
 
         # Behavior monitoring (alert only): log, popup, tray message. The
         # popup's Suspend/Resume/Kill each need their own confirmation.
-        self.behavior_popup = BehaviorAlertPopup(parent=self)
+        self.behavior_popup = BehaviorAlertPopup(guard=self.process_guard, parent=self)
         self.auto_scan_controller.behavior_alert.connect(self._on_behavior_alert)
 
         # Logon auto-hide (see schedule_auto_hide) - only ever started for

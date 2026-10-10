@@ -70,6 +70,7 @@ from PySide6.QtCore import QObject, Signal
 from devadara import drive_scanner, persistence_scanner, process_scanner, scan_engine
 from devadara.memory import get_combined_known_bad_hashes
 from devadara.signature_scanner import check_digital_signatures_batch, load_trusted_publishers
+from devadara_gui.process_guard import describe_suspect
 
 THREAT_TIERS = {"known_bad", "malware", "suspicious"}
 
@@ -132,6 +133,14 @@ class ScanWorker(QObject):
     # whatever it found before stopping is still real. Used to log
     # auto-scan findings and raise the hidden-window tray notification.
     findings = Signal(list)
+    # Everything the Results page shows for this scan, sent once just before
+    # finished (kept in memory only - see results_store.py):
+    #   {"flagged": [scan results], "hidden": [paths],
+    #    "startup": [persistence entries whose target was flagged, each with
+    #                its "scan" result], "processes": [suspicious processes,
+    #                each with exe/create_time snapshotted for process_guard,
+    #                its "reasons" and the "scan" of its .exe]}
+    results = Signal(dict)
     finished = Signal(bool, int, int, int, float)  # stopped_early, checked, threats, hidden, elapsed_seconds
 
     def __init__(self, targets, system_area_flags, quick, model, feature_columns,
@@ -171,6 +180,13 @@ class ScanWorker(QObject):
         suspicious_processes = []
         if self._system_area_flags.get("memory_processes"):
             suspicious_processes = process_scanner.list_suspicious_processes()
+            # Identity snapshot now (path + start time), so a later Suspend/
+            # Kill from the Results page can refuse a reused PID.
+            for proc in suspicious_processes:
+                snapshot = describe_suspect(proc)
+                proc["create_time"] = snapshot["create_time"]
+                proc["exe"] = proc.get("exe") or snapshot["exe"]
+        hidden_files = []
 
         checked = 0
         threats = 0
@@ -202,6 +218,7 @@ class ScanWorker(QObject):
             self._flagged.extend(outcome["known_bad_findings"] + outcome["to_review"])
             threats += len(outcome["known_bad_findings"]) + len(outcome["to_review"])
             hidden += len(outcome["hidden_files"])
+            hidden_files.extend(outcome["hidden_files"])
             if outcome["interrupted"]:
                 stopped = True
 
@@ -228,6 +245,13 @@ class ScanWorker(QObject):
         for result in self._flagged:
             unique.setdefault(result["file_path"], result)
         self.findings.emit(list(unique.values()))
+        self.results.emit({
+            "flagged": list(unique.values()),
+            "hidden": hidden_files,
+            "startup": [e for e in persistence_entries
+                        if e.get("scan") and e["scan"]["tier"] in THREAT_TIERS],
+            "processes": [p for p in suspicious_processes if "scan" in p],
+        })
         self.finished.emit(stopped, checked, threats, hidden, elapsed)
 
     def _evaluate_entries(self, entries, get_path, get_label, known_bad_hashes, model,

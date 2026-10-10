@@ -116,6 +116,9 @@ class ScanPage(QWidget):
     # sweep) finished with at least one flagged file; MainWindow turns it
     # into a tray notification when the window is hidden.
     auto_scan_flagged = Signal(str, list)
+    # ScanWorker.results of a finished MANUAL scan (stopped ones too) - the
+    # Results page's in-memory "last scan" (see results_store.py).
+    manual_scan_results = Signal(dict)
 
     def __init__(self, navigate=None, main_window=None, controller=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
@@ -147,6 +150,7 @@ class ScanPage(QWidget):
         self._pending_queue = deque()
         self._scan_active = False  # see scan_active_changed
         self._current_findings = []
+        self._current_results = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 60)
@@ -514,6 +518,7 @@ class ScanPage(QWidget):
         auto-triggered one."""
         self._current_request = request
         self._current_findings = []
+        self._current_results = None
         if not self._scan_active:
             self._scan_active = True
             self.scan_active_changed.emit(True)
@@ -545,6 +550,7 @@ class ScanPage(QWidget):
         self._worker.progress.connect(self._mini_popup.update_progress)
         self._worker.stats.connect(self._mini_popup.update_stats)
         self._worker.findings.connect(self._on_findings)
+        self._worker.results.connect(self._on_results)
         self._worker.finished.connect(self._on_scan_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
@@ -583,6 +589,10 @@ class ScanPage(QWidget):
         # Emitted by the worker just before finished - see ScanWorker.findings.
         self._current_findings = findings
 
+    def _on_results(self, results):
+        # Emitted by the worker just before finished - see ScanWorker.results.
+        self._current_results = results
+
     def _record_findings(self, request, findings):
         """Log an unattended request's findings and announce them - never
         acts on them (no quarantine/delete; that stays a human decision)."""
@@ -597,6 +607,10 @@ class ScanPage(QWidget):
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
         self._record_findings(self._current_request, self._current_findings)
         self._current_findings = []
+        if (self._current_request is not None and not self._current_request.is_auto
+                and self._current_results is not None):
+            self.manual_scan_results.emit(self._current_results)
+        self._current_results = None
         is_auto = self._current_request is not None and self._current_request.is_auto
         if is_auto:
             self._mini_popup.show_auto_scan_result(stopped, checked, threats, hidden, elapsed)

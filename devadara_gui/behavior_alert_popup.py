@@ -13,7 +13,7 @@ suspected-programs list is only "which programs had files open in that
 folder" (best-effort - often empty on a busy PC, see behavior_monitor.py).
 
 Each suspected program gets Suspend / Resume / Kill. Every one of them
-goes through confirm_process_action() first (Cancel is the default, Enter
+goes through dialogs.confirm_process_action() first (Cancel is the default, Enter
 and Escape both cancel) and then process_guard.ProcessGuard.perform(),
 which refuses Windows' own processes, DEVADARA itself, unverifiable
 programs, and recycled PIDs. Nothing here ever acts on its own.
@@ -32,19 +32,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from devadara_gui import theme
+from devadara_gui import dialogs, theme
 from devadara_gui.components import Button, Card
 from devadara_gui.process_guard import ProcessGuard, refusal_reason
 
 MAX_SAMPLE_FILES = 5
-
-_ACTION_TEXT = {
-    "suspend": ("Suspend", "This freezes the program. Nothing is lost, and Resume undoes it."),
-    "resume": ("Resume", "This lets the program continue running."),
-    "kill": ("Kill", "This ends the program immediately. Any unsaved work in it is lost. "
-                     "This cannot be undone."),
-}
-
 
 def _center_on_screen(widget, anchor=None):
     screen = ((anchor.screen() if anchor is not None else None)
@@ -55,38 +47,6 @@ def _center_on_screen(widget, anchor=None):
     widget.adjustSize()
     widget.move(geo.center().x() - widget.width() // 2,
                 geo.center().y() - widget.height() // 2)
-
-
-def build_confirm_box(parent, action, suspect):
-    """The confirmation dialog for one action on one program - Cancel is
-    the default and the escape button, so only an explicit click on the
-    action button proceeds. Returned unexecuted so tests/previews can
-    inspect or render it; confirm_process_action() runs it."""
-    verb, consequence = _ACTION_TEXT[action]
-    name = suspect.get("name") or "unknown program"
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(f"{verb} {name}?")
-    box.setText(f"{verb} this program?")
-    box.setInformativeText(
-        f"Program:  {name}\n"
-        f"PID:  {suspect['pid']}\n"
-        f"Path:  {suspect.get('exe') or 'unknown'}\n\n"
-        f"{consequence}"
-    )
-    cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-    proceed = box.addButton(verb, QMessageBox.ButtonRole.DestructiveRole)
-    box.setDefaultButton(cancel)
-    box.setEscapeButton(cancel)
-    box.proceed_button = proceed
-    _center_on_screen(box, parent)
-    return box
-
-
-def confirm_process_action(parent, action, suspect):
-    box = build_confirm_box(parent, action, suspect)
-    box.exec()
-    return box.clickedButton() is box.proceed_button
 
 
 class _SuspectRow(QWidget):
@@ -111,7 +71,7 @@ class _SuspectRow(QWidget):
 
         self.buttons = {}
         for action in ("suspend", "resume", "kill"):
-            button = Button(_ACTION_TEXT[action][0])
+            button = Button(dialogs.PROCESS_ACTION_TEXT[action][0])
             button.clicked.connect(lambda _=False, a=action: self._popup._on_action(a, self))
             top.addWidget(button)
             self.buttons[action] = button
@@ -151,13 +111,13 @@ class _SuspectRow(QWidget):
 class BehaviorAlertPopup(QWidget):
     _WIDTH = 520
 
-    def __init__(self, guard=None, confirm=confirm_process_action, parent=None):
+    def __init__(self, guard=None, confirm=None, parent=None):
         """guard: the app-lifetime ProcessGuard (remembers what we
         suspended). confirm: callable(parent, action, suspect) -> bool -
-        injectable for tests; defaults to the real dialog."""
+        injectable for tests; defaults to dialogs.confirm_process_action."""
         super().__init__(parent)
         self.guard = guard or ProcessGuard()
-        self._confirm = confirm
+        self._confirm = confirm  # None = the shared dialogs.confirm_process_action
         self._rows = []
 
         self.setWindowFlags(
@@ -262,7 +222,8 @@ class BehaviorAlertPopup(QWidget):
         return [r for r in self._rows if isinstance(r, _SuspectRow)]
 
     def _on_action(self, action, row):
-        if not self._confirm(self, action, row.suspect):
+        confirm = self._confirm or dialogs.confirm_process_action
+        if not confirm(self, action, row.suspect):
             return  # cancelled - nothing happens
         _ok, message = self.guard.perform(action, row.suspect)
         row.refresh(message)

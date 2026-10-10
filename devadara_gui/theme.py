@@ -413,4 +413,38 @@ def build_stylesheet():
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
             height: 0px;
         }}
+
+        /* ─── Confirmation dialog (dialogs.py) ─── */
+        QDialog#confirmDialog {{
+            background: {PANEL_SOLID};
+            border: 1px solid {BORDER};
+        }}
+
+        QLabel#confirmHeading {{
+            color: {WARN};
+        }}
+
+        QLabel#confirmItems {{
+            color: {CYAN};
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            padding: 8px;
+        }}
+
+        QLabel#confirmDetails {{
+            color: {TEXT_DIM};
+        }}
+
+        QLineEdit#confirmTyped {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            padding: 6px;
+            color: {TEXT};
+        }}
+
+        QLineEdit#confirmTyped:focus {{
+            border-color: {NEON};
+        }}
     """
