@@ -16,7 +16,7 @@ list_removable_drives() already does with the opposite opts filter.
 """
 
 import os
-from collections import deque
+from collections import deque, namedtuple
 
 import psutil
 from PySide6.QtCore import QThread, QTimer, Qt, Signal
@@ -39,12 +39,28 @@ from devadara.usb_monitor import list_removable_drives
 
 from devadara_gui import theme
 from devadara_gui.components import Button, Card, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow
+from devadara_gui.mini_form_popup import MiniFormPopup
 from devadara_gui.scan_worker import ScanWorker, format_elapsed, gather_persistence_entries
 
 FIXED_PREFIX = "fixed:"
 USB_PREFIX = "usb:"
 
 MODES = ["Quick Scan", "Full Scan", "Scan Downloads", "Scan USB"]
+
+# One scan request, manual or auto-triggered - built by _resolve_scan_plan()
+# (manual) or _on_downloads_file_detected()/_on_usb_drive_detected() (auto),
+# and either started immediately or queued by _enqueue_or_start() if a scan
+# is already running. is_auto/auto_label drive which UI path _start_scan()/
+# _on_scan_finished() take - see their own docstrings.
+_ScanRequest = namedtuple("_ScanRequest", [
+    "targets", "system_area_flags", "quick", "model", "feature_columns",
+    "persistence_entries", "is_auto", "auto_label",
+])
+
+# A reactive single-file/single-drive auto-scan trigger has nothing to do
+# with registry/services/startup/process state - only the file or drive
+# itself is being checked.
+_NO_SYSTEM_AREA_FLAGS = {"registry": False, "startup": False, "services": False, "memory_processes": False}
 
 SYSTEM_AREA_CHILD_KEYS = ["memory_processes", "services", "registry", "startup"]
 SYSTEM_AREA_LABELS = {
@@ -79,12 +95,22 @@ def _drive_label(mountpoint, is_usb):
 
 
 class ScanPage(QWidget):
-    def __init__(self, navigate=None, parent=None):
+    def __init__(self, navigate=None, main_window=None, controller=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
         the sidebar's active nav item (see MainWindow.navigate_to), used by
-        the Fix All buttons to reach the Results page."""
+        the Fix All buttons to reach the Results page.
+        main_window: the app's MainWindow - hidden/restored around the
+        Mini-Form popup when the user minimizes/opens Details on an active
+        scan (see _on_minimize_requested/_on_details_requested).
+        controller: the app's AutoScanController - its
+        downloads_file_detected/usb_drive_detected signals feed
+        _on_downloads_file_detected/_on_usb_drive_detected, which enqueue
+        or start an auto-triggered scan the same way a manual Start click
+        does (see _enqueue_or_start/_start_scan)."""
         super().__init__(parent)
         self._navigate = navigate
+        self._main_window = main_window
+        self._controller = controller
 
         self._rows = {}  # key -> TreeRow
         self._system_area_keys = set()
@@ -95,6 +121,8 @@ class ScanPage(QWidget):
         self._system_area_row = None
         self._thread = None
         self._worker = None
+        self._current_request = None
+        self._pending_queue = deque()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 60)
@@ -126,6 +154,15 @@ class ScanPage(QWidget):
         self._progress_view.fix_all_requested.connect(self._on_fix_all_requested)
         self._progress_view.close_requested.connect(lambda: self._inner_stack.setCurrentIndex(0))
         self._progress_view.stop_confirmed.connect(self._on_stop_confirmed)
+        self._progress_view.minimize_requested.connect(self._on_minimize_requested)
+
+        self._mini_popup = MiniFormPopup(self._main_window)
+        self._mini_popup.details_requested.connect(self._on_details_requested)
+        self._mini_popup.stop_requested.connect(self._on_popup_stop_requested)
+
+        if self._controller is not None:
+            self._controller.downloads_file_detected.connect(self._on_downloads_file_detected)
+            self._controller.usb_drive_detected.connect(self._on_usb_drive_detected)
 
         self._inner_stack.addWidget(config_view)      # index 0
         self._inner_stack.addWidget(self._progress_view)  # index 1
@@ -325,15 +362,25 @@ class ScanPage(QWidget):
 
     def _on_scan_clicked(self):
         targets, system_area_flags, quick = self._resolve_scan_plan()
+        already_running = self._thread is not None
 
-        self._inner_stack.setCurrentIndex(1)
-        self._progress_view.reset_for_new_scan()
-        # Force an immediate repaint before the blocking calls below start -
-        # otherwise Qt wouldn't actually draw this transition until control
-        # returns to the event loop, so the screen would appear to still be
-        # showing the old config view (looking frozen) for the whole
-        # duration of those calls instead of showing "initializing...".
-        QApplication.processEvents()
+        # Only touch the progress view/popup's "starting" state if nothing
+        # is currently running - if an auto-scan's popup is live right now,
+        # a manual click must not reset it out from under that scan; the
+        # click's own request just gets queued instead (see
+        # _enqueue_or_start), and this same prelude runs later, from
+        # _start_scan, once it's this request's turn.
+        if not already_running:
+            self._inner_stack.setCurrentIndex(1)
+            self._progress_view.reset_for_new_scan()
+            self._mini_popup.reset()
+            # Force an immediate repaint before the blocking calls below
+            # start - otherwise Qt wouldn't actually draw this transition
+            # until control returns to the event loop, so the screen would
+            # appear to still be showing the old config view (looking
+            # frozen) for the whole duration of those calls instead of
+            # showing "initializing...".
+            QApplication.processEvents()
 
         # Two devadara/ calls are confirmed (see scan_worker.py's module
         # docstring - each isolated and reproduced individually, not
@@ -345,7 +392,11 @@ class ScanPage(QWidget):
         # persistence ~10s for services alone) - real, bounded pauses, not
         # symptoms of a bug - so each gets its own visible status line
         # (with an explicit repaint) plus a wait cursor, rather than leaving
-        # the screen looking static/stuck for however long they take.
+        # the screen looking static/stuck for however long they take. These
+        # loads happen even when a scan is already running and this request
+        # will just be queued - manual clicks always reload fresh (unlike
+        # auto-triggers, which reuse the controller's cached model), and
+        # that's unaffected by queueing.
         #
         # The USB hot-plug poll timer is also stopped for this whole
         # window - confirmed via another reproduction that it firing during
@@ -360,14 +411,15 @@ class ScanPage(QWidget):
             if quick:
                 model, feature_columns = None, None
             else:
-                self._progress_view.update_progress("loading detection engine...", 0)
-                QApplication.processEvents()
+                if not already_running:
+                    self._progress_view.update_progress("loading detection engine...", 0)
+                    QApplication.processEvents()
                 model, feature_columns = load_model_and_features()
 
             needs_persistence = any(
                 system_area_flags.get(key) for key in ("registry", "startup", "services")
             )
-            if needs_persistence:
+            if needs_persistence and not already_running:
                 self._progress_view.update_progress("checking startup entries and services...", 0)
                 QApplication.processEvents()
             persistence_entries = gather_persistence_entries(system_area_flags)
@@ -377,16 +429,74 @@ class ScanPage(QWidget):
         if was_polling:
             self._poll_timer.start(USB_POLL_INTERVAL_MS)
 
+        request = _ScanRequest(
+            targets, system_area_flags, quick, model, feature_columns, persistence_entries,
+            is_auto=False, auto_label=None,
+        )
+        if already_running:
+            self._pending_queue.append(request)
+        else:
+            self._start_scan(request)
+
+    def _on_downloads_file_detected(self, file_path):
+        if self._controller is None or self._controller.model is None:
+            return
+        self._enqueue_or_start(_ScanRequest(
+            [file_path], _NO_SYSTEM_AREA_FLAGS, False,
+            self._controller.model, self._controller.feature_columns, [],
+            is_auto=True, auto_label=f"Downloads: {os.path.basename(file_path)}",
+        ))
+
+    def _on_usb_drive_detected(self, drive_path):
+        if self._controller is None or self._controller.model is None:
+            return
+        self._enqueue_or_start(_ScanRequest(
+            [drive_path], _NO_SYSTEM_AREA_FLAGS, False,
+            self._controller.model, self._controller.feature_columns, [],
+            is_auto=True, auto_label=f"USB drive: {drive_path}",
+        ))
+
+    def _enqueue_or_start(self, request):
+        if self._thread is None:
+            self._start_scan(request)
+        else:
+            self._pending_queue.append(request)
+
+    def _start_scan(self, request):
+        """Builds and starts the ScanWorker/QThread for one request - shared
+        by manual Start clicks and auto-triggered detections (see
+        _on_scan_clicked/_enqueue_or_start). is_auto picks which UI comes
+        up: the full progress screen for a manual scan, vs. just the
+        Mini-Form popup (auto-shown, main window untouched) for an
+        auto-triggered one."""
+        self._current_request = request
+
+        if request.is_auto:
+            self._mini_popup.reset()
+            self._mini_popup.update_progress(request.auto_label, 0)
+            self._mini_popup.show_positioned()
+        else:
+            self._inner_stack.setCurrentIndex(1)
+            self._progress_view.reset_for_new_scan()
+            self._mini_popup.reset()
+
         self._thread = QThread(self)
         self._worker = ScanWorker(
-            targets, system_area_flags, quick, model, feature_columns, persistence_entries
+            request.targets, request.system_area_flags, request.quick,
+            request.model, request.feature_columns, request.persistence_entries,
         )
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
-        self._worker.progress.connect(self._progress_view.update_progress)
-        self._worker.stats.connect(self._progress_view.update_stats)
-        self._worker.log_line.connect(self._progress_view.append_log)
+        if not request.is_auto:
+            self._worker.progress.connect(self._progress_view.update_progress)
+            self._worker.stats.connect(self._progress_view.update_stats)
+            self._worker.log_line.connect(self._progress_view.append_log)
+        # Same real signals, also connected to the Mini-Form popup so it
+        # mirrors this scan live - no log_line, the popup has no log panel
+        # (see mini_form_popup.py).
+        self._worker.progress.connect(self._mini_popup.update_progress)
+        self._worker.stats.connect(self._mini_popup.update_stats)
         self._worker.finished.connect(self._on_scan_finished)
         self._worker.finished.connect(self._thread.quit)
         self._worker.finished.connect(self._worker.deleteLater)
@@ -422,20 +532,78 @@ class ScanPage(QWidget):
         return targets, system_area_flags, quick
 
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
-        if stopped:
-            self._inner_stack.setCurrentIndex(0)
+        is_auto = self._current_request is not None and self._current_request.is_auto
+        if is_auto:
+            self._mini_popup.show_auto_scan_result(stopped, checked, threats, hidden, elapsed)
         else:
-            self._progress_view.show_finished(checked, threats, hidden, elapsed)
+            if stopped:
+                self._inner_stack.setCurrentIndex(0)
+            else:
+                self._progress_view.show_finished(checked, threats, hidden, elapsed)
+            # Mirrors the same finish onto the popup too, in case the user
+            # had minimized this manual scan - unchanged behavior from
+            # before request queueing existed.
+            self._mini_popup.show_finished(stopped, checked, threats, hidden, elapsed)
+
         self._worker = None
         self._thread = None
+        self._current_request = None
+        if self._pending_queue:
+            self._start_scan(self._pending_queue.popleft())
 
     def _on_stop_confirmed(self):
+        if self._worker is not None:
+            self._worker.stop()
+
+    def is_scan_running(self):
+        """Used by MainWindow.closeEvent to decide whether to warn before
+        closing to tray - a running scan (self._thread not yet cleared by
+        _on_scan_finished) counts, regardless of whether it's manual or
+        auto-triggered."""
+        return self._thread is not None
+
+    def force_stop_running_scan(self):
+        """Used by MainWindow.closeEvent/_exit_app - the user already
+        confirmed via that dialog, so this skips confirm_stop_dialog
+        (unlike _on_stop_confirmed's normal callers) and also drops
+        anything still queued, since closing means nothing should keep
+        running in the background afterward."""
+        self._pending_queue.clear()
         if self._worker is not None:
             self._worker.stop()
 
     def _on_fix_all_requested(self):
         if self._navigate is not None:
             self._navigate(3)  # Results page - see main_window.NAV_ITEMS
+
+    def _on_minimize_requested(self):
+        # Popup shown BEFORE the main window hides, so there's never a
+        # moment with zero visible top-level windows (Qt's default
+        # quitOnLastWindowClosed behavior is tied to a real close event,
+        # not a bare .hide(), but avoiding the gap entirely sidesteps
+        # needing to rely on that distinction at all).
+        self._mini_popup.show_positioned()
+        if self._main_window is not None:
+            self._main_window.hide()
+
+    def _on_details_requested(self):
+        self._mini_popup.hide()
+        if self._main_window is not None:
+            self._main_window.show()
+            self._main_window.raise_()
+            self._main_window.activateWindow()
+
+    def _on_popup_stop_requested(self):
+        # Stop, specifically from the popup, closes the popup and restores
+        # the main window immediately - unlike a scan finishing on its own
+        # while minimized (show_finished/show_auto_scan_result, still
+        # frozen-until-Details>>/auto-fade as before), the user just took
+        # an explicit action here and there's nothing left for the popup
+        # to usefully keep showing.
+        if confirm_stop_dialog(self._mini_popup):
+            self._mini_popup.set_stop_enabled(False)
+            self._on_stop_confirmed()
+            self._on_details_requested()
 
     # ─── live USB hot-plug detection ───
 
@@ -560,6 +728,38 @@ class ScanCompleteCard(QWidget):
         self._title.setGraphicsEffect(theme.glow_effect(accent, blur=16))
 
 
+def confirm_stop_dialog(parent):
+    """Same "Stop scan in progress?" QMessageBox used by both
+    ScanProgressView's own Stop button and MiniFormPopup's Stop button
+    (via ScanPage._on_popup_stop_requested) - extracted to a module-level
+    function so the popup doesn't duplicate this dialog's copy/behavior."""
+    box = QMessageBox(parent)
+    box.setWindowTitle("Stop scan in progress?")
+    box.setText(
+        "Stopping now cancels the scan before it finishes. Files "
+        "already checked are unaffected."
+    )
+    keep_button = box.addButton("Keep Scanning", QMessageBox.ButtonRole.RejectRole)
+    stop_button = box.addButton("Stop Scan", QMessageBox.ButtonRole.DestructiveRole)
+    box.setDefaultButton(keep_button)
+
+    # Centered on the screen, not left to Qt's default of centering over
+    # `parent` - when parent is the Mini-Form popup (a small window
+    # anchored to the bottom-right corner), that default tucks this dialog
+    # into the same corner instead of the middle of the desktop.
+    screen = (parent.screen() if parent is not None else None) or QApplication.primaryScreen()
+    if screen is not None:
+        geo = screen.availableGeometry()
+        box.adjustSize()
+        box.move(
+            geo.center().x() - box.width() // 2,
+            geo.center().y() - box.height() // 2,
+        )
+
+    box.exec()
+    return box.clickedButton() is stop_button
+
+
 class ScanProgressView(QWidget):
     """The scan-in-progress screen: current-target path + live Files-Checked
     count + indeterminate progress bar, the 3 live stats (reusing StatCard
@@ -589,6 +789,7 @@ class ScanProgressView(QWidget):
     fix_all_requested = Signal()
     close_requested = Signal()
     stop_confirmed = Signal()
+    minimize_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -668,8 +869,8 @@ class ScanProgressView(QWidget):
         self._log_button.clicked.connect(self._toggle_log)
         buttons_row.addWidget(self._log_button)
 
-        self._mini_form_button = Button("Mini-Form", variant="secondary")
-        self._mini_form_button.setEnabled(False)  # Phase 3c builds the real popup
+        self._mini_form_button = Button("Minimize", variant="secondary")
+        self._mini_form_button.clicked.connect(self.minimize_requested.emit)
         buttons_row.addWidget(self._mini_form_button)
 
         self._stop_button = Button("Stop", variant="secondary")
@@ -735,18 +936,7 @@ class ScanProgressView(QWidget):
         self.close_requested.emit()
 
     def _confirm_stop(self):
-        # Same QMessageBox pattern as Phase 3a's System Area dialog.
-        box = QMessageBox(self)
-        box.setWindowTitle("Stop scan in progress?")
-        box.setText(
-            "Stopping now cancels the scan before it finishes. Files "
-            "already checked are unaffected."
-        )
-        keep_button = box.addButton("Keep Scanning", QMessageBox.ButtonRole.RejectRole)
-        stop_button = box.addButton("Stop Scan", QMessageBox.ButtonRole.DestructiveRole)
-        box.setDefaultButton(keep_button)
-        box.exec()
-        return box.clickedButton() is stop_button
+        return confirm_stop_dialog(self)
 
     def reset_for_new_scan(self):
         self._progress_section.show()

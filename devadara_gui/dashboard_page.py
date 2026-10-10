@@ -5,9 +5,10 @@ Phase 2: the Dashboard page's real content - hero status card, stats row,
 and Quick Actions - wired to whatever real backend data actually exists.
 
 Data-source investigation (see the Phase 2 plan for the full table):
-real-time protection state (devadara.startup_registration.is_in_startup())
-and threat/suspicious counts (devadara.scan_log.read_findings()) are real
-and live. Nothing in the backend currently persists a "files scanned"
+real-time protection state (AutoScanController.realtime_state_changed,
+connected to set_realtime_state by MainWindow - the same signal the
+sidebar's REAL-TIME label uses, so the two always agree) and
+threat/suspicious counts (devadara.scan_log.read_findings()) are real. Nothing in the backend currently persists a "files scanned"
 running total or a "last scan" timestamp for any of the interactive scan
 tools (scan_cli.py, full_drive_scan_cli.py, downloads_scan_cli.py,
 usb_scan_cli.py never write to scan_log.jsonl - only the unattended
@@ -19,7 +20,6 @@ rather than a fake or stale number.
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QVBoxLayout, QWidget
 
 from devadara import scan_log
-from devadara.startup_registration import is_in_startup
 
 from devadara_gui.components import ActionCard, Card, HeroStatusCard, PageHeader, StatCard
 
@@ -48,7 +48,6 @@ def _gather_stats():
     suspicious = sum(1 for entry in findings if entry.get("tier") == "suspicious")
 
     return {
-        "protected": is_in_startup(),
         "files_scanned": "—",  # no backend source yet
         "threats": threats,
         "suspicious": suspicious,
@@ -70,21 +69,29 @@ class DashboardPage(QWidget):
 
         stats = _gather_stats()
 
-        header = PageHeader(
-            "Dashboard",
-            "// system_status: {} — welcome back, operator".format(
-                "secured" if stats["protected"] else "unprotected"
-            ),
-        )
-        layout.addWidget(header)
+        self._header = PageHeader("Dashboard", "")
+        layout.addWidget(self._header)
 
+        self._last_scan_text = stats["last_full_scan"]
         self._hero = HeroStatusCard()
-        self._hero.set_state(stats["protected"], stats["last_full_scan"])
         layout.addWidget(self._hero)
+
+        # STARTING until the controller's first realtime_state_changed
+        # (emitted once the model has loaded and watchers have started).
+        self._apply_realtime_state("starting")
 
         layout.addLayout(self._build_stats_row(stats))
         layout.addWidget(self._build_quick_actions())
         layout.addStretch(1)
+
+    def set_realtime_state(self, active):
+        """Connected to AutoScanController.realtime_state_changed."""
+        self._apply_realtime_state("active" if active else "off")
+
+    def _apply_realtime_state(self, state):
+        status = {"starting": "starting", "active": "secured", "off": "unprotected"}[state]
+        self._header.sub_label.setText(f"// system_status: {status} — welcome back, operator")
+        self._hero.set_state(state, self._last_scan_text)
 
     def _build_stats_row(self, stats):
         row = QHBoxLayout()

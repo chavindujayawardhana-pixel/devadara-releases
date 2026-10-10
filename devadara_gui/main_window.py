@@ -10,28 +10,35 @@ target design this replicates.
 
 import os
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QStackedWidget,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
 )
 
 from devadara_gui import theme
+from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.components import NavItem, PageHeader
 from devadara_gui.dashboard_page import DashboardPage
+from devadara_gui.protection_page import ProtectionPage
 from devadara_gui.scan_page import ScanPage
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The processed (transparent-cornered) icon - used for both the window/
-# taskbar icon and the sidebar logo, so the two are always identical.
-ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
+# The processed (transparent-cornered) icon - used for the window/taskbar
+# icon, the sidebar logo, and the Mini-Form popup header, so all three are
+# always identical. Lives in theme.py (see its own comment) so
+# mini_form_popup.py can import it too without an import cycle back here.
+ICON_PATH = theme.ICON_PATH
 
 NAV_ITEMS = [
     ("▣", "Dashboard"),         # ▣
@@ -41,12 +48,11 @@ NAV_ITEMS = [
     ("⚙", "Settings"),          # ⚙
 ]
 
-# Dashboard (index 0) and Scan (index 1) have real content - see
-# DashboardPage/ScanPage. The rest are still placeholders; this list stays
-# in NAV_ITEMS order starting from index 2 so PLACEHOLDER_PAGES[i] lines up
-# with NAV_ITEMS[i + 2].
+# Dashboard (index 0), Scan (index 1), and Protection (index 2) have real
+# content - see DashboardPage/ScanPage/ProtectionPage. The rest are still
+# placeholders; this list stays in NAV_ITEMS order starting from index 3
+# so PLACEHOLDER_PAGES[i] lines up with NAV_ITEMS[i + 3].
 PLACEHOLDER_PAGES = [
-    ("Protection", "// security modules — status and control"),
     ("Results", "// findings from last scan — click path to locate"),
     ("Settings", "// configure system preferences"),
 ]
@@ -170,14 +176,12 @@ class Sidebar(QFrame):
         self._dot.setFixedSize(8, 8)
         self._dot.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._dot_on = True
-        self._update_dot()
         row.addWidget(self._dot)
 
-        value = QLabel("ACTIVE")
-        value.setObjectName("statusValue")
-        value.setFont(theme.letter_spaced_font(size=9, bold=True, spacing=1))
-        value.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=8))
-        row.addWidget(value)
+        self._status_value = QLabel()
+        self._status_value.setObjectName("statusValue")
+        self._status_value.setFont(theme.letter_spaced_font(size=9, bold=True, spacing=1))
+        row.addWidget(self._status_value)
         row.addStretch(1)
 
         box_layout.addLayout(row)
@@ -185,18 +189,43 @@ class Sidebar(QFrame):
 
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._toggle_dot)
-        self._blink_timer.start(1000)
+
+        # Starts as STARTING... - never ACTIVE - until the controller
+        # reports the watchers are really running (set_realtime_state).
+        self._dot_color = QColor(theme.TEXT_DIM)
+        self._status_value.setText("STARTING…")
+        self._status_value.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self._update_dot()
 
         return wrap
+
+    def set_realtime_state(self, active):
+        """Connected to AutoScanController.realtime_state_changed."""
+        if active:
+            self._dot_color = QColor(theme.NEON)
+            self._status_value.setText("ACTIVE")
+            self._status_value.setStyleSheet(f"color: {theme.NEON};")
+            self._status_value.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=8))
+            self._blink_timer.start(1000)
+        else:
+            self._dot_color = QColor(theme.DANGER)
+            self._status_value.setText("OFF")
+            self._status_value.setStyleSheet(f"color: {theme.DANGER};")
+            self._status_value.setGraphicsEffect(None)
+            self._blink_timer.stop()
+        self._dot_on = True
+        self._update_dot()
 
     def _toggle_dot(self):
         self._dot_on = not self._dot_on
         self._update_dot()
 
     def _update_dot(self):
+        color = self._dot_color
         alpha = 255 if self._dot_on else 70
         self._dot.setStyleSheet(
-            f"background-color: rgba(0, 255, 170, {alpha}); border-radius: 4px; border: none;"
+            f"background-color: rgba({color.red()}, {color.green()}, {color.blue()}, {alpha}); "
+            f"border-radius: 4px; border: none;"
         )
 
 
@@ -279,6 +308,8 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet(theme.build_stylesheet())
 
+        self.auto_scan_controller = AutoScanController(self)
+
         central = BackgroundCanvas()
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -288,8 +319,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
-        self.stack.addWidget(DashboardPage(navigate=self.navigate_to))
-        self.stack.addWidget(ScanPage(navigate=self.navigate_to))
+        self.dashboard_page = DashboardPage(navigate=self.navigate_to)
+        self.stack.addWidget(self.dashboard_page)
+        self.scan_page = ScanPage(navigate=self.navigate_to, main_window=self,
+                                   controller=self.auto_scan_controller)
+        self.stack.addWidget(self.scan_page)
+        self.protection_page = ProtectionPage(self.auto_scan_controller)
+        self.stack.addWidget(self.protection_page)
         for title, subtitle in PLACEHOLDER_PAGES:
             self.stack.addWidget(PagePlaceholder(title, subtitle))
         layout.addWidget(self.stack, 1)
@@ -300,6 +336,145 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.setMaximumSize(self.MAX_WIDTH, self.MAX_HEIGHT)
         self.resize(self.MAX_WIDTH, self.MAX_HEIGHT)
+
+        self.auto_scan_controller.realtime_state_changed.connect(self.sidebar.set_realtime_state)
+        self.auto_scan_controller.realtime_state_changed.connect(self.dashboard_page.set_realtime_state)
+
+        self._build_tray_icon()
+
+        # Logon auto-hide (see schedule_auto_hide) - only ever started for
+        # an --autostart launch.
+        self._auto_hide_timer = QTimer(self)
+        self._auto_hide_timer.setSingleShot(True)
+        self._auto_hide_timer.timeout.connect(self._on_auto_hide_timeout)
+
+    def start_background_init(self):
+        """Call right after show(). Loading the ML model is a real ~3-7s
+        blocking call that has to stay on the GUI thread (see
+        auto_scan_controller.py), so it's delayed long enough for the
+        window to actually be painted first rather than raced against the
+        first paint. Watchers only start once it's done, so a detection
+        can never race an unloaded model, and the sidebar only says ACTIVE
+        once they have."""
+        QTimer.singleShot(150, self.auto_scan_controller.load_model)
+
+    def schedule_auto_hide(self, delay_ms):
+        """For a Windows-logon (--autostart) launch: hide to the tray after
+        delay_ms unless the user clicks or types in the window first.
+        Never armed without a tray icon to hide into."""
+        if self.tray_icon is None:
+            return
+        QApplication.instance().installEventFilter(self)
+        self._auto_hide_timer.start(delay_ms)
+
+    def cancel_auto_hide(self):
+        if not self._auto_hide_timer.isActive():
+            return
+        self._auto_hide_timer.stop()
+        QApplication.instance().removeEventFilter(self)
+
+    def _on_auto_hide_timeout(self):
+        QApplication.instance().removeEventFilter(self)
+        if self.tray_icon is None or self.scan_page.is_scan_running():
+            return
+        # Same path as pressing X - closeEvent hides to the tray, watchers
+        # keep running.
+        self.close()
+
+    def eventFilter(self, watched, event):
+        # Only installed while an auto-hide is pending.
+        if event.type() in (QEvent.Type.MouseButtonPress,
+                            QEvent.Type.NonClientAreaMouseButtonPress,
+                            QEvent.Type.KeyPress):
+            if isinstance(watched, QWidget) and watched.window() is self:
+                self.cancel_auto_hide()
+        return super().eventFilter(watched, event)
+
+    def _build_tray_icon(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            # No tray to live in (e.g. the shell's tray area isn't up
+            # yet) - closeEvent/_exit_app below both check for this and
+            # fall back to a normal close instead of hiding to nothing.
+            self.tray_icon = None
+            return
+
+        self.tray_icon = QSystemTrayIcon(self)
+        if os.path.exists(ICON_PATH):
+            self.tray_icon.setIcon(QIcon(ICON_PATH))
+        self.tray_icon.setToolTip("DEVADARA — Antivirus Guard")
+
+        menu = QMenu()
+        show_action = menu.addAction("Show DEVADARA")
+        show_action.triggered.connect(self._restore_from_tray)
+        menu.addSeparator()
+        exit_action = menu.addAction("Exit")
+        exit_action.triggered.connect(self._exit_app)
+        self.tray_icon.setContextMenu(menu)
+
+        self.tray_icon.activated.connect(self._on_tray_activated)
+        self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.ActivationReason.Trigger,
+                      QSystemTrayIcon.ActivationReason.DoubleClick):
+            self._restore_from_tray()
+
+    def _restore_from_tray(self):
+        # Covers a second launch's SHOW message and the tray's "Show
+        # DEVADARA" - an explicit request to see the window wins over a
+        # pending logon auto-hide.
+        self.cancel_auto_hide()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _exit_app(self):
+        self.scan_page.force_stop_running_scan()
+        self.auto_scan_controller.stop_downloads_watch()
+        self.auto_scan_controller.stop_usb_watch()
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+        QApplication.instance().quit()
+
+    def changeEvent(self, event):
+        # Coming back to the window (e.g. from Task Manager's Startup apps
+        # tab) - refresh the Windows Startup toggle so it never shows stale
+        # state. Display only; nothing here writes to the registry.
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.protection_page.refresh_startup_state()
+        super().changeEvent(event)
+
+    def closeEvent(self, event):
+        # X minimizes to the tray (the app keeps running so auto-scan
+        # watchers stay active) rather than quitting - real quitting only
+        # happens via the tray icon's own Exit action (_exit_app). If a
+        # scan is actively running, confirm first: closing to tray with a
+        # scan silently still running in the background with no visible
+        # popup/window would be confusing, so this path stops it (after
+        # confirmation) rather than leaving it orphaned.
+        if self.scan_page.is_scan_running():
+            box = QMessageBox(self)
+            box.setWindowTitle("Scan is running")
+            box.setText("Closing will stop the current scan. Are you sure?")
+            keep_button = box.addButton("Keep Scanning", QMessageBox.ButtonRole.RejectRole)
+            close_button = box.addButton("Yes, Close", QMessageBox.ButtonRole.DestructiveRole)
+            box.setDefaultButton(keep_button)
+            box.exec()
+            if box.clickedButton() is not close_button:
+                event.ignore()
+                return
+            self.scan_page.force_stop_running_scan()
+
+        if self.tray_icon is None:
+            # No tray to hide into - hiding would leave an invisible,
+            # unreachable process, so close for real instead.
+            self.auto_scan_controller.stop_downloads_watch()
+            self.auto_scan_controller.stop_usb_watch()
+            event.accept()
+            return
+
+        event.ignore()
+        self.hide()
 
     def navigate_to(self, index, mode=None):
         """Switch both the content stack and the sidebar's active nav item

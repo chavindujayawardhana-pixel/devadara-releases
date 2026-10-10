@@ -18,6 +18,8 @@ instead of duplicating styling inline.
   TreeCheckbox  - small custom checkbox, click-only (.tree-item input)
   TreeRow       - one checkbox-tree row, group or child (.tree-item)
   StatusCircle  - large outline circle with a drawn check/exclamation mark
+  ModuleToggleCard - a Card with a title, description, and a ToggleSwitch,
+                     used by the Protection page's auto-scan toggles
 """
 
 from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, Signal
@@ -362,18 +364,27 @@ class HeroStatusCard(QFrame):
         layout.addLayout(text_col)
         layout.addStretch(1)
 
-    def set_state(self, protected, last_scan_text):
-        """protected: real devadara.startup_registration.is_in_startup()
-        value - never hardcoded. last_scan_text: display string, e.g.
-        "Never" when no backend source has a real timestamp yet."""
-        if protected:
-            accent, status_word, status_text = theme.NEON, "ACTIVE", "SYSTEM SECURED"
+    def set_state(self, state, last_scan_text):
+        """state: "starting" | "active" | "off" - the real auto-scan watcher
+        state from AutoScanController.realtime_state_changed (see
+        DashboardPage.set_realtime_state), same source as the sidebar's
+        REAL-TIME label - never hardcoded. last_scan_text: display string,
+        e.g. "Never" when no backend source has a real timestamp yet."""
+        if state == "active":
+            accent, status_word, status_text, glow = theme.NEON, "ACTIVE", "SYSTEM SECURED", True
+        elif state == "off":
+            accent, status_word, status_text, glow = theme.DANGER, "OFF", "PROTECTION OFF", True
         else:
-            accent, status_word, status_text = theme.DANGER, "INACTIVE", "SYSTEM UNPROTECTED"
+            accent, status_word, status_text, glow = theme.TEXT_DIM, "STARTING", "STARTING PROTECTION…", False
+
+        # Scoped to #heroCard so it can't cascade into the child QLabels;
+        # only the border colour changes, the QSS gradient background stays.
+        self.setStyleSheet(f"QFrame#heroCard {{ border-color: {accent}; }}")
+        self._shield.setGraphicsEffect(theme.glow_effect(accent, blur=16) if glow else None)
 
         self._status.setText(status_text)
         self._status.setStyleSheet(f"color: {accent};")
-        self._status.setGraphicsEffect(theme.glow_effect(accent, blur=18))
+        self._status.setGraphicsEffect(theme.glow_effect(accent, blur=18) if glow else None)
 
         self._desc.setText(
             f'Real-time protection <span style="color:{accent};">[{status_word}]</span>'
@@ -713,3 +724,58 @@ class StatusCircle(QWidget):
             painter.drawEllipse(QRectF(cx - 2.5, cy + 12, 5, 5))
 
         painter.end()
+
+
+class ModuleToggleCard(Card):
+    """A Card with a title + ToggleSwitch header, a description line, and a
+    small "// ACTIVE"/"// OFF" status label - used by the Protection page's
+    Downloads/USB Auto-Scan toggles. title="" skips Card's own header (a
+    custom one is built here instead, since it needs the switch inline)."""
+
+    toggled = Signal(bool)
+
+    def __init__(self, title, description, initial_checked=True, parent=None):
+        super().__init__(parent=parent)
+
+        header = QHBoxLayout()
+        header.setSpacing(8)
+
+        title_label = QLabel(title)
+        title_label.setFont(theme.letter_spaced_font(size=11, bold=True, spacing=1))
+        title_label.setStyleSheet(f"color: {theme.TEXT};")
+        header.addWidget(title_label)
+        header.addStretch(1)
+
+        self._switch = ToggleSwitch(checked=initial_checked)
+        self._switch.toggled.connect(self._on_switch_toggled)
+        header.addWidget(self._switch)
+
+        self.content_layout.addLayout(header)
+
+        desc = QLabel(description)
+        desc.setWordWrap(True)
+        desc.setFont(theme.letter_spaced_font(size=8, spacing=0.3))
+        desc.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.content_layout.addWidget(desc)
+
+        self._status_label = QLabel()
+        self._status_label.setFont(theme.letter_spaced_font(size=7, bold=True, spacing=1))
+        self.content_layout.addWidget(self._status_label)
+
+        self._update_status(initial_checked)
+
+    def _on_switch_toggled(self, checked):
+        self._update_status(checked)
+        self.toggled.emit(checked)
+
+    def set_checked_silently(self, checked):
+        """Reflect external state (e.g. re-read from the registry) without
+        emitting toggled - so syncing the UI never writes anything back."""
+        self._switch.blockSignals(True)
+        self._switch.setChecked(checked, animate=False)
+        self._switch.blockSignals(False)
+        self._update_status(checked)
+
+    def _update_status(self, checked):
+        self._status_label.setText("// ACTIVE" if checked else "// OFF")
+        self._status_label.setStyleSheet(f"color: {theme.NEON if checked else theme.TEXT_MUTE};")
