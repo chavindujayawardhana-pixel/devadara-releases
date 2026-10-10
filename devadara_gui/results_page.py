@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QStackedWidget,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -63,8 +64,8 @@ PROGRAM_FILES = [os.path.normcase(os.path.abspath(p)) for p in
 
 SOURCE_LABELS = {
     "last_scan": "Last scan",
-    "downloads_watch": "Downloads auto-scan",
-    "usb_watch": "USB auto-scan",
+    "downloads_watch": "Downloads",
+    "usb_watch": "USB",
     "boot_sweep": "Startup scan",
 }
 
@@ -73,13 +74,75 @@ def _norm(path):
     return os.path.normcase(os.path.abspath(path)) if path else ""
 
 
-def _threat_text(result):
-    if result.get("threat_name"):
-        return result["threat_name"]
-    confidence = (result.get("ml") or {}).get("confidence")
-    if confidence is None:
-        confidence = (result.get("details") or {}).get("confidence")
-    return f"ML {confidence:.0%}" if confidence is not None else "—"
+NOTHING = "—"  # shown only when the data truly holds nothing to show
+_PLACEHOLDERS = {None, "", "—", "–", "-"}
+
+
+def signature_text(result):
+    """The digital-signature facts the scan recorded, to help judge a false
+    positive (a signed installer that a "suspicious" YARA rule still holds
+    at "suspicious"). Display only - it never changes a verdict. None when
+    no signature was checked (non-executables never are)."""
+    sig = result.get("signature")
+    if sig:
+        status = sig.get("status")
+        # A certificate name containing a comma arrives quoted ('"HITPAW CO.')
+        # - stripped for display only; detection still uses the raw value.
+        publisher = (sig.get("publisher") or "").strip('" ') or None
+        if sig.get("valid_and_trusted"):
+            return f"Signed: {publisher}"
+        if status == "Valid" and publisher:
+            return f"Signed: {publisher} (certificate expired)"
+        if status == "NotSigned":
+            return "Unsigned"
+        if status in ("Error", "Unknown", None):
+            return "signature check failed"
+        return f"Signature {status}" + (f": {publisher}" if publisher else "")
+    # Scan-log entries only record the publisher name, not whether the
+    # signature was valid - say exactly that much.
+    publisher = (result.get("details") or {}).get("publisher")
+    return f"Publisher: {publisher}" if publisher else None
+
+
+def reason_text(result):
+    """Why a scan_engine result (or a scan_log entry, whose extra fields
+    sit under "details") was flagged, in plain words, built only from
+    fields that exist: the threat name (hash match / high-severity YARA),
+    YARA rule names (a "suspicious" YARA match sets no threat name), the
+    ML score, and the trusted-publisher-name downgrade. None if the data
+    holds none of these - e.g. an auto-scan log entry for a YARA match,
+    since the scan log doesn't record rule names."""
+    details = result.get("details") or {}
+    parts = []
+    threat = result.get("threat_name") or details.get("threat_name")
+    if threat not in _PLACEHOLDERS:
+        parts.append(threat)
+    rules = [m["rule"] for m in (result.get("yara") or []) if m.get("rule")]
+    if rules and not (threat or "").startswith("YARA:"):
+        parts.append("YARA: " + ", ".join(rules))
+    ml = result.get("ml") or {}
+    # A file the ML model couldn't read (is_pe False) carries a placeholder
+    # 0.0, not a real score - never shown as one.
+    confidence = ml.get("confidence") if ml.get("is_pe", True) else None
+    if confidence is None and not ml:
+        confidence = details.get("confidence") or None
+    if confidence is not None:
+        parts.append(f"ML score {confidence:.0%}")
+    signature = signature_text(result)
+    if signature:
+        parts.append(signature)
+    if result.get("downgraded_from_malware") or details.get("downgraded_from_malware"):
+        parts.append("publisher name on the trusted list, but its signature isn't verified")
+    return "; ".join(parts) or None
+
+
+class _MiddleElideDelegate(QStyledItemDelegate):
+    """Paths elide in the middle (drive ... file name); every other column
+    elides at the end so the start of a reason stays readable."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.textElideMode = Qt.TextElideMode.ElideMiddle
 
 
 class ResultsTab(QWidget):
@@ -88,10 +151,13 @@ class ResultsTab(QWidget):
 
     path_clicked = Signal(str)
 
-    def __init__(self, columns, path_column, parent=None):
+    def __init__(self, columns, path_column, priority_column=None, parent=None):
         super().__init__(parent)
         self._columns = [""] + list(columns)
         self._path_column = path_column + 1
+        # The column that explains WHY (threat / reason) - it shares the
+        # width with the path instead of being capped like the rest.
+        self._priority_column = priority_column + 1 if priority_column is not None else None
         self._payloads = []
 
         layout = QVBoxLayout(self)
@@ -111,7 +177,9 @@ class ResultsTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table.setWordWrap(False)
-        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self._path_delegate = _MiddleElideDelegate(self.table)
+        self.table.setItemDelegateForColumn(self._path_column, self._path_delegate)
         self.table.setMouseTracking(True)
         # Columns are always fitted to the width (see _fit_columns).
         self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -121,6 +189,7 @@ class ResultsTab(QWidget):
         header.setMinimumSectionSize(36)
         self.table.cellClicked.connect(self._on_cell_clicked)
         layout.addWidget(self.table, 1)
+
 
         self.actions = QHBoxLayout()
         self.actions.setSpacing(10)
@@ -168,9 +237,14 @@ class ResultsTab(QWidget):
             check.setCheckState(Qt.CheckState.Unchecked)
             table.setItem(r, 0, check)
             for c, text in enumerate(cells, start=1):
-                item = QTableWidgetItem(str(text))
+                text = str(text)
+                if c == self._priority_column:
+                    # One line per part of the reason ("YARA: ..." /
+                    # "Signed: ..."), so no part is cut off by the others.
+                    text = text.replace(" — ", "\n").replace("; ", "\n")
+                item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                item.setToolTip(str(text))
+                item.setToolTip(text)
                 if c == self._path_column:
                     item.setForeground(QColor(theme.CYAN))
                     font = QFont(item.font())
@@ -178,10 +252,17 @@ class ResultsTab(QWidget):
                     item.setFont(font)
                     item.setToolTip(f"{text}\n(click to show in File Explorer)")
                 table.setItem(r, c, item)
+        # Rows grow only for multi-line reasons; single-line rows keep 36px.
+        line_height = table.fontMetrics().lineSpacing()
+        for r in range(len(rows)):
+            item = table.item(r, self._priority_column) if self._priority_column else None
+            lines = item.text().count("\n") + 1 if item is not None else 1
+            table.setRowHeight(r, max(36, lines * line_height + 16))
 
         QTimer.singleShot(0, self._fit_columns)
 
-    PATH_SHARE = 0.3      # the path column never gets less than this share...
+    PATH_SHARE = 0.25     # the path column never gets less than this share...
+    PRIORITY_SHARE = 0.35 # ...and the reason column up to this share
     PATH_MIN = 160        # ...or this many pixels, however narrow the window
     CHECK_WIDTH = 36
     CELL_PADDING = 12     # theme.py: QTableWidget#resultsTable::item padding
@@ -203,17 +284,28 @@ class ResultsTab(QWidget):
         # its floor; the path then takes everything left (eliding in the
         # middle if a long path still doesn't fit).
         if sum(natural.values()) + path_floor > room:
-            # Cap only the widest columns (one shared cap), so short ones -
+            # The reason column keeps up to its share; then only the widest
+            # of the rest are capped (one shared cap), so short ones -
             # names, PIDs, statuses - stay whole and long text elides.
-            budget = max(room - path_floor, 60 * len(others))
-            cap = max(natural.values())
-            while cap > 60 and sum(min(w, cap) for w in natural.values()) > budget:
+            fixed = {}
+            prio = self._priority_column
+            if prio in natural:
+                fixed[prio] = min(natural[prio], max(int(room * self.PRIORITY_SHARE), 120))
+            rest = {c: w for c, w in natural.items() if c not in fixed}
+            if prio in fixed:
+                # Very narrow: the reason column gives back what the other
+                # columns need for their 60px minimum.
+                fixed[prio] = max(120, min(fixed[prio], room - path_floor - 60 * len(rest)))
+            budget = max(room - path_floor - sum(fixed.values()), 60 * len(rest))
+            cap = max(rest.values()) if rest else 60
+            while cap > 60 and sum(min(w, cap) for w in rest.values()) > budget:
                 cap -= 4
-            natural = {c: max(60, min(w, cap)) for c, w in natural.items()}
+            natural = {**{c: max(60, min(w, cap)) for c, w in rest.items()}, **fixed}
         header.resizeSection(0, self.CHECK_WIDTH)
         for c, w in natural.items():
             header.resizeSection(c, w)
         header.resizeSection(self._path_column, max(room - sum(natural.values()), self.PATH_MIN))
+
 
     # Fitted after the event, once the table itself has its final width - a
     # hidden tab (or one mid-resize) still reports a stale viewport width.
@@ -244,7 +336,7 @@ class ResultsTab(QWidget):
         if column != self._path_column or row >= len(self._payloads):
             return
         item = self.table.item(row, column)
-        if item is not None and item.text() and item.text() != "—":
+        if item is not None and item.text() and item.text() != NOTHING:
             self.path_clicked.emit(item.text())
 
 
@@ -289,12 +381,15 @@ class ResultsPage(QWidget):
 
         self._stack = QStackedWidget()
         self.tabs = {
-            "Virus": ResultsTab(["Threat", "Verdict", "File path", "Found by", "Status"], path_column=2),
-            "Startup": ResultsTab(["Entry", "Type", "Target path", "Verdict", "Status"], path_column=2),
-            "Hidden": ResultsTab(["Name", "Attributes", "Path", "Status"], path_column=2),
+            "Virus": ResultsTab(["Threat", "Verdict", "File path", "Found by", "Status"],
+                                path_column=2, priority_column=0),
+            "Startup": ResultsTab(["Entry", "Type", "Target path", "Verdict", "Status"],
+                                  path_column=2, priority_column=3),
+            "Hidden": ResultsTab(["Name", "Attributes", "Path", "Status"], path_column=2, priority_column=1),
             "Quarantine": ResultsTab(["Original name", "Threat", "Verdict", "Quarantined", "Original path"],
-                                     path_column=4),
-            "Process": ResultsTab(["Program", "PID", "Path", "Why flagged", "Status"], path_column=2),
+                                     path_column=4, priority_column=1),
+            "Process": ResultsTab(["Program", "PID", "Path", "Why flagged", "Status"],
+                                  path_column=2, priority_column=3),
         }
         for name in self.TABS:
             tab = self.tabs[name]
@@ -386,7 +481,7 @@ class ResultsPage(QWidget):
         for result in self._store.flagged:
             key = _norm(result["file_path"])
             items[key] = {"file_path": result["file_path"], "hash": result.get("hash"),
-                          "tier": result["tier"], "threat": _threat_text(result),
+                          "tier": result["tier"], "threat": reason_text(result),
                           "sources": ["last_scan"], "log_ids": [], "from_store": True}
         for entry in scan_log.read_findings():
             if entry.get("tier") not in THREAT_TIERS or not entry.get("file_path"):
@@ -394,7 +489,7 @@ class ResultsPage(QWidget):
             key = _norm(entry["file_path"])
             item = items.setdefault(key, {
                 "file_path": entry["file_path"], "hash": entry.get("hash"), "tier": entry["tier"],
-                "threat": _threat_text(entry), "sources": [], "log_ids": [], "from_store": False})
+                "threat": reason_text(entry), "sources": [], "log_ids": [], "from_store": False})
             if entry.get("source") not in item["sources"]:
                 item["sources"].append(entry.get("source"))
             item["log_ids"].append(entry["id"])
@@ -405,7 +500,7 @@ class ResultsPage(QWidget):
         for item in self.virus_items():
             status = "On disk" if os.path.isfile(item["file_path"]) else "File missing"
             sources = ", ".join(SOURCE_LABELS.get(s, s or "?") for s in item["sources"])
-            rows.append(([item["threat"], item["tier"], item["file_path"], sources, status], item))
+            rows.append(([item["threat"] or NOTHING, item["tier"], item["file_path"], sources, status], item))
         self.tabs["Virus"].set_rows(rows)
         return len(rows)
 
@@ -425,8 +520,10 @@ class ResultsPage(QWidget):
             else:
                 status = "TARGET MISSING"
             name = entry.get("name") or entry.get("location") or "?"
-            tier = (entry.get("scan") or {}).get("tier", "—")
-            rows.append(([name, entry.get("source", "?"), target or "—", tier, status], entry))
+            scan = entry.get("scan") or {}
+            reason = reason_text(scan)
+            verdict = scan.get("tier", NOTHING) + (f" — {reason}" if reason else "")
+            rows.append(([name, entry.get("source", "?"), target or NOTHING, verdict, status], entry))
         self.tabs["Startup"].set_rows(rows)
         return len(rows)
 
@@ -446,9 +543,13 @@ class ResultsPage(QWidget):
                          reverse=True)
         for entry in entries:
             original = entry.get("original_path") or ""
-            rows.append(([os.path.basename(original) or "?", entry.get("threat_name") or "—",
-                          entry.get("tier") or "—", (entry.get("quarantined_at") or "").replace("T", " "),
-                          original or "—"], entry))
+            threat = entry.get("threat_name")
+            # Older Results-page entries saved the table's placeholder as
+            # the threat name - treat that as "nothing recorded".
+            rows.append(([os.path.basename(original) or "?",
+                          NOTHING if threat in _PLACEHOLDERS else threat,
+                          entry.get("tier") or NOTHING, (entry.get("quarantined_at") or "").replace("T", " "),
+                          original or NOTHING], entry))
         self.tabs["Quarantine"].set_rows(rows)
         return len(rows)
 
@@ -462,8 +563,13 @@ class ResultsPage(QWidget):
     def _refresh_process(self):
         rows = []
         for proc in self._store.processes:
-            rows.append(([proc.get("name") or "?", str(proc["pid"]), proc.get("exe") or "—",
-                          "; ".join(proc.get("reasons") or []) or "—", self.process_status(proc)], proc))
+            why = list(proc.get("reasons") or [])
+            scan = proc.get("scan") or {}
+            if scan.get("tier") in THREAT_TIERS:
+                reason = reason_text(scan)
+                why.append(f"its file: {scan['tier']}" + (f" ({reason})" if reason else ""))
+            rows.append(([proc.get("name") or "?", str(proc["pid"]), proc.get("exe") or NOTHING,
+                          "; ".join(why) or NOTHING, self.process_status(proc)], proc))
         self.tabs["Process"].set_rows(rows)
         self._update_process_buttons()
         return len(rows)
@@ -646,7 +752,7 @@ class ResultsPage(QWidget):
         target = entry.get("resolved_path") or ""
         scan = entry.get("scan") or {}
         item = {"file_path": target, "hash": scan.get("hash"), "tier": scan.get("tier"),
-                "threat": scan.get("threat_name") or f"Startup entry target ({entry.get('name') or entry.get('location')})"}
+                "threat": reason_text(scan) or f"Startup entry target ({entry.get('name') or entry.get('location')})"}
         allowed, refused = self._partition_for_quarantine([item])
         if not allowed:
             reason = refused[0][1]
