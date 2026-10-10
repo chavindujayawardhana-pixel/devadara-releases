@@ -10,7 +10,7 @@ target design this replicates.
 
 import os
 
-from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication,
@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (
 
 from devadara_gui import theme
 from devadara_gui.auto_scan_controller import AutoScanController
-from devadara_gui.components import NavItem, PageHeader
+from devadara_gui.components import (
+    NavItem, PageHeader, ScanOrbitLogo, load_orbit_layers, orbit_frame, scaled_image,
+)
 from devadara_gui.dashboard_page import DashboardPage
 from devadara_gui.protection_page import ProtectionPage
 from devadara_gui.scan_page import ScanPage
@@ -39,6 +41,8 @@ from devadara_gui.scan_page import ScanPage
 # always identical. Lives in theme.py (see its own comment) so
 # mini_form_popup.py can import it too without an import cycle back here.
 ICON_PATH = theme.ICON_PATH
+
+TRAY_TOOLTIP = "DEVADARA — Antivirus Guard"
 
 NAV_ITEMS = [
     ("▣", "Dashboard"),         # ▣
@@ -72,7 +76,7 @@ class Sidebar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(230)
+        self.setFixedWidth(theme.SIDEBAR_WIDTH)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         root = QVBoxLayout(self)
@@ -94,18 +98,9 @@ class Sidebar(QFrame):
         row = QHBoxLayout()
         row.setSpacing(12)
 
-        icon = QLabel()
-        icon.setFixedSize(36, 36)
-        pixmap = QPixmap(ICON_PATH)
-        if not pixmap.isNull():
-            pixmap = pixmap.scaled(
-                36, 36,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            icon.setPixmap(pixmap)
-        icon.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=14))
-        row.addWidget(icon)
+        # Rotates its orbit ring while a scan runs - wired up in MainWindow.
+        self.logo = ScanOrbitLogo(theme.SIDEBAR_LOGO_SIZE)
+        row.addWidget(self.logo)
 
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
@@ -114,12 +109,12 @@ class Sidebar(QFrame):
             f'<span style="color:{theme.NEON};">DEVA</span>'
             f'<span style="color:{theme.TEXT};">DARA</span>'
         )
-        wordmark.setFont(theme.letter_spaced_font(size=11, black=True, spacing=2))
-        wordmark.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=10))
+        wordmark.setFont(theme.letter_spaced_font(size=theme.SIDEBAR_NAME_PT, black=True, spacing=2))
+        wordmark.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=14))
         text_col.addWidget(wordmark)
 
         tagline = QLabel("// ANTIVIRUS v1.0")
-        tagline.setFont(theme.letter_spaced_font(size=6, spacing=2))
+        tagline.setFont(theme.letter_spaced_font(size=theme.SIDEBAR_TAGLINE_PT, spacing=2))
         tagline.setStyleSheet(f"color: {theme.TEXT_DIM};")
         text_col.addWidget(tagline)
 
@@ -294,6 +289,60 @@ class BackgroundCanvas(QWidget):
         painter.end()
 
 
+class TrayOrbitAnimator(QObject):
+    """Rotates the tray icon's orbit ring while a scan runs (the sidebar's
+    version is components.ScanOrbitLogo). Frames are built once, on the
+    first scan, and cached: the ring is 180-degree symmetric, so 12 frames
+    at 15-degree steps loop seamlessly - same speed as the sidebar, but at
+    ~10fps since every setIcon() is a round-trip to the Windows shell."""
+
+    FRAME_COUNT = 12
+    FRAME_MS = 100
+    ICON_SIZES = (16, 24, 32)
+    SCANNING_TOOLTIP = "DEVADARA — scanning…"
+
+    def __init__(self, tray_icon, parent=None):
+        super().__init__(parent)
+        self._tray = tray_icon
+        self._layers = load_orbit_layers()
+        self._frames = None
+        self._index = 0
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self._next_frame)
+
+    def set_scanning(self, scanning):
+        """Connected to ScanPage.scan_active_changed."""
+        if self._layers is None:
+            return
+        if scanning:
+            if self._frames is None:
+                self._frames = self._build_frames()
+            self._index = 0
+            self._tray.setToolTip(self.SCANNING_TOOLTIP)
+            self._timer.start()
+        else:
+            self._timer.stop()
+            self._tray.setIcon(QIcon(ICON_PATH))
+            self._tray.setToolTip(TRAY_TOOLTIP)
+
+    def _build_frames(self):
+        base, orbit = self._layers
+        sized = [(scaled_image(base, s), scaled_image(orbit, s)) for s in self.ICON_SIZES]
+        frames = []
+        for i in range(self.FRAME_COUNT):
+            angle = 180.0 * i / self.FRAME_COUNT
+            icon = QIcon()
+            for b, o in sized:
+                icon.addPixmap(QPixmap.fromImage(orbit_frame(b, o, angle)))
+            frames.append(icon)
+        return frames
+
+    def _next_frame(self):
+        self._tray.setIcon(self._frames[self._index])
+        self._index = (self._index + 1) % self.FRAME_COUNT
+
+
 class MainWindow(QMainWindow):
     MAX_WIDTH = 1120
     MAX_HEIGHT = 655
@@ -341,6 +390,14 @@ class MainWindow(QMainWindow):
         self.auto_scan_controller.realtime_state_changed.connect(self.dashboard_page.set_realtime_state)
 
         self._build_tray_icon()
+
+        # Orbit animation while any scan runs (manual, Downloads, USB,
+        # queued) - see ScanPage.scan_active_changed.
+        self.scan_page.scan_active_changed.connect(self.sidebar.logo.set_scanning)
+        self.tray_animator = None
+        if self.tray_icon is not None:
+            self.tray_animator = TrayOrbitAnimator(self.tray_icon, self)
+            self.scan_page.scan_active_changed.connect(self.tray_animator.set_scanning)
 
         # Logon auto-hide (see schedule_auto_hide) - only ever started for
         # an --autostart launch.
@@ -401,7 +458,7 @@ class MainWindow(QMainWindow):
         self.tray_icon = QSystemTrayIcon(self)
         if os.path.exists(ICON_PATH):
             self.tray_icon.setIcon(QIcon(ICON_PATH))
-        self.tray_icon.setToolTip("DEVADARA — Antivirus Guard")
+        self.tray_icon.setToolTip(TRAY_TOOLTIP)
 
         menu = QMenu()
         show_action = menu.addAction("Show DEVADARA")

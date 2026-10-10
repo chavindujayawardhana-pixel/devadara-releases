@@ -95,6 +95,13 @@ def _drive_label(mountpoint, is_usb):
 
 
 class ScanPage(QWidget):
+    # True when a scan starts from idle; False only once the last one ends
+    # with nothing left queued - a queued follow-up scan emits nothing, so
+    # listeners (the orbit-animated sidebar logo and tray icon) never
+    # flicker between back-to-back scans. Covers manual and auto-triggered
+    # scans alike, and stopped ones (ScanWorker always emits finished).
+    scan_active_changed = Signal(bool)
+
     def __init__(self, navigate=None, main_window=None, controller=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
         the sidebar's active nav item (see MainWindow.navigate_to), used by
@@ -123,6 +130,7 @@ class ScanPage(QWidget):
         self._worker = None
         self._current_request = None
         self._pending_queue = deque()
+        self._scan_active = False  # see scan_active_changed
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 60)
@@ -470,6 +478,9 @@ class ScanPage(QWidget):
         Mini-Form popup (auto-shown, main window untouched) for an
         auto-triggered one."""
         self._current_request = request
+        if not self._scan_active:
+            self._scan_active = True
+            self.scan_active_changed.emit(True)
 
         if request.is_auto:
             self._mini_popup.reset()
@@ -550,6 +561,9 @@ class ScanPage(QWidget):
         self._current_request = None
         if self._pending_queue:
             self._start_scan(self._pending_queue.popleft())
+        else:
+            self._scan_active = False
+            self.scan_active_changed.emit(False)
 
     def _on_stop_confirmed(self):
         if self._worker is not None:

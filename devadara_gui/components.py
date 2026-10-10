@@ -20,10 +20,13 @@ instead of duplicating styling inline.
   StatusCircle  - large outline circle with a drawn check/exclamation mark
   ModuleToggleCard - a Card with a title, description, and a ToggleSwitch,
                      used by the Protection page's auto-scan toggles
+  ScanOrbitLogo - the app logo whose orbit ring rotates while a scan runs
+                  (sidebar header; orbit_frame() is shared with the tray)
 """
 
-from PySide6.QtCore import Property, QEasingCurve, QPointF, QPropertyAnimation, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtCore import (Property, QEasingCurve, QElapsedTimer, QPointF, QPropertyAnimation,
+                            QRectF, Qt, QTimer, Signal)
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from devadara_gui import theme
@@ -779,3 +782,120 @@ class ModuleToggleCard(Card):
     def _update_status(self, checked):
         self._status_label.setText("// ACTIVE" if checked else "// OFF")
         self._status_label.setStyleSheet(f"color: {theme.NEON if checked else theme.TEXT_MUTE};")
+
+
+# ─── Scan-running orbit animation (sidebar logo + tray icon) ───
+
+# The orbit ring's centre in app_icon.png as a fraction of the icon size,
+# measured from the 600px source - the eye (and the ring drawn around it)
+# sits ~9px above the rounded square's own centre.
+ORBIT_CENTER = (0.5, 287 / 600)
+ORBIT_PERIOD_MS = 2400  # one full turn
+
+
+def load_orbit_layers():
+    """(base, orbit) QImages, or None if either asset is missing - callers
+    then simply stay static. base + orbit at 0 degrees == app_icon.png."""
+    base = QImage(theme.ICON_BASE_PATH)
+    orbit = QImage(theme.ICON_ORBIT_PATH)
+    if base.isNull() or orbit.isNull():
+        return None
+    return base, orbit
+
+
+def scaled_image(image, pixels):
+    return image.scaled(pixels, pixels, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+
+
+def orbit_frame(base, orbit, angle):
+    """One frame: base, plus the orbit layer rotated `angle` degrees about
+    ORBIT_CENTER and added on as light (CompositionMode_Plus), then clipped
+    back to base's own rounded-square alpha so rotated glow never spills
+    into the transparent corners. base and orbit must be the same size."""
+    frame = base.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    cx = ORBIT_CENTER[0] * frame.width()
+    cy = ORBIT_CENTER[1] * frame.height()
+    painter = QPainter(frame)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
+    painter.translate(cx, cy)
+    painter.rotate(angle)
+    painter.translate(-cx, -cy)
+    painter.drawImage(0, 0, orbit)
+    painter.resetTransform()
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    painter.drawImage(0, 0, base)
+    painter.end()
+    return frame
+
+
+class ScanOrbitLogo(QWidget):
+    """The app logo at a fixed size. While a scan runs (set_scanning(True),
+    fed by ScanPage.scan_active_changed) its orbit ring - both arcs and
+    both dots - rotates around the eye; idle it's exactly the static
+    app_icon.png. One QTimer drives it, running only while scanning AND
+    visible, so nothing ticks when idle or when hidden to the tray."""
+
+    FRAME_MS = 33  # ~30fps
+
+    def __init__(self, size, parent=None):
+        super().__init__(parent)
+        self._size = size
+        self.setFixedSize(size, size)
+        # Blur 14 was tuned for the original 36px logo - scale with it.
+        self.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=round(14 * size / 36)))
+
+        self._layers = load_orbit_layers()
+        self._scanning = False
+        self._cache_ratio = None
+        self._static = self._base = self._orbit = None
+
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(self.FRAME_MS)
+        self._timer.timeout.connect(self.update)
+
+    def set_scanning(self, scanning):
+        self._scanning = bool(scanning) and self._layers is not None
+        if self._scanning:
+            self._clock.start()
+            if self.isVisible():
+                self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._scanning:
+            self._timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
+    def _ensure_cache(self):
+        # Images are cached at device pixels so a high-DPI screen stays sharp.
+        ratio = self.devicePixelRatioF()
+        if ratio == self._cache_ratio:
+            return
+        self._cache_ratio = ratio
+        pixels = round(self._size * ratio)
+        self._static = scaled_image(QImage(theme.ICON_PATH), pixels)
+        if self._layers is not None:
+            self._base = scaled_image(self._layers[0], pixels)
+            self._orbit = scaled_image(self._layers[1], pixels)
+
+    def paintEvent(self, event):
+        self._ensure_cache()
+        if self._scanning:
+            angle = (self._clock.elapsed() % ORBIT_PERIOD_MS) * 360 / ORBIT_PERIOD_MS
+            image = orbit_frame(self._base, self._orbit, angle)
+        else:
+            image = self._static
+        if image.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(QRectF(0, 0, self._size, self._size), image)

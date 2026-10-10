@@ -22,6 +22,19 @@ from PySide6.QtWidgets import QGraphicsDropShadowEffect
 # main_window -> scan_page -> mini_form_popup -> main_window import cycle.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
+# Orbit-animation layers, split once from app_icon.png: the logo with its
+# orbit ring removed, and the ring alone as additive light on black - see
+# components.ScanOrbitLogo.
+ICON_BASE_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon_base.png")
+ICON_ORBIT_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon_orbit.png")
+
+# Sidebar header - deliberately larger than the mockup (user decision).
+# SIDEBAR_LOGO_SIZE is the one knob for the logo: ScanOrbitLogo sizes
+# itself and scales its glow from it.
+SIDEBAR_WIDTH = 240
+SIDEBAR_LOGO_SIZE = 56
+SIDEBAR_NAME_PT = 15
+SIDEBAR_TAGLINE_PT = 7
 
 # ─── Color tokens (exact hex from the mockup's :root) ───
 BG = "#0a0a0f"
