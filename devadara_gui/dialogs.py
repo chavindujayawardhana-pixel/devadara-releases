@@ -22,6 +22,7 @@ never via a from-import.
 """
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -36,6 +37,8 @@ from devadara_gui import theme
 from devadara_gui.components import Button
 
 MAX_LISTED_ITEMS = 10
+DIALOG_WIDTH = 600      # px - fixed, so wrapped text gets its real height
+ITEM_LINE_WIDTH = 500   # px; longer paths are shortened in the middle
 
 
 class ConfirmDialog(QDialog):
@@ -46,8 +49,7 @@ class ConfirmDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(480)
-        self.setMaximumWidth(720)
+        self.setFixedWidth(DIALOG_WIDTH)
         self._typed_word = typed_word
 
         layout = QVBoxLayout(self)
@@ -70,11 +72,16 @@ class ConfirmDialog(QDialog):
             shown = items[:MAX_LISTED_ITEMS]
             if len(items) > MAX_LISTED_ITEMS:
                 shown.append(f"… and {len(items) - MAX_LISTED_ITEMS} more")
-            listing = QLabel("\n".join(shown))
+            listing = QLabel()
             listing.setObjectName("confirmItems")
-            listing.setWordWrap(True)
-            listing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             listing.setFont(theme.letter_spaced_font(size=8, spacing=0.2))
+            metrics = QFontMetrics(listing.font())
+            # One line per item (a path never wraps mid-way); the full
+            # list is in the tooltip.
+            listing.setText("\n".join(
+                metrics.elidedText(line, Qt.TextElideMode.ElideMiddle, ITEM_LINE_WIDTH) for line in shown))
+            listing.setToolTip("\n".join(items))
+            listing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(listing)
 
         if details:
@@ -133,7 +140,13 @@ class ConfirmDialog(QDialog):
         if screen is None:
             return
         geo = screen.availableGeometry()
-        self.adjustSize()
+        # Height for the fixed width - adjustSize() alone undersizes
+        # word-wrapped labels and cuts the last lines off.
+        layout = self.layout()
+        layout.activate()
+        height = (layout.totalHeightForWidth(DIALOG_WIDTH) if layout.hasHeightForWidth()
+                  else self.sizeHint().height())
+        self.resize(DIALOG_WIDTH, max(height, self.sizeHint().height()))
         self.move(geo.center().x() - self.width() // 2, geo.center().y() - self.height() // 2)
 
 

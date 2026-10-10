@@ -506,6 +506,24 @@ def build_stylesheet():
             color: {TEXT_DIM};
         }}
 
+        QDialog#confirmDialog QCheckBox {{
+            color: {TEXT};
+            spacing: 8px;
+        }}
+
+        QDialog#confirmDialog QCheckBox::indicator {{
+            width: 13px;
+            height: 13px;
+            border: 1px solid {TEXT_MUTE};
+            border-radius: 2px;
+            background: transparent;
+        }}
+
+        QDialog#confirmDialog QCheckBox::indicator:checked {{
+            border-color: {NEON};
+            background: {rgba_css(BORDER_GLOW_RGBA)};
+        }}
+
         QLineEdit#confirmTyped {{
             background: rgba(0, 0, 0, 0.4);
             border: 1px solid {BORDER};

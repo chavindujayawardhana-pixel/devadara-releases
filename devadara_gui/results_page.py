@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from devadara import quarantine, scan_log
+from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
 from devadara_gui import dialogs, theme
 from devadara_gui.components import Button, PageHeader
@@ -289,6 +290,10 @@ class ResultsPage(QWidget):
         layout.addWidget(self._stack, 1)
 
         self._tab_group.idClicked.connect(self._stack.setCurrentIndex)
+
+        hidden = self.tabs["Hidden"]
+        self.unhide_all_button = hidden.add_action("Unhide All", self.unhide_all, primary=True)
+        self.unhide_checked_button = hidden.add_action("Unhide Checked", self.unhide_checked)
         self._tab_buttons[0].setChecked(True)
 
         store.changed.connect(self.refresh)
@@ -433,6 +438,73 @@ class ResultsPage(QWidget):
         return len(rows)
 
     # ─── actions (every one behind dialogs.confirm) ───
+
+    UNHIDE_MESSAGE = ("This removes the Hidden attribute so the file shows normally in File "
+                      "Explorer. Nothing else about the file changes - it is not opened, run, "
+                      "moved or deleted. You can hide it again from its Properties.")
+
+    @staticmethod
+    def _split_by_refusal(paths, reason_for):
+        allowed, refused = [], []
+        for path in paths:
+            reason = reason_for(path)
+            if reason is None:
+                allowed.append(path)
+            else:
+                refused.append((path, reason))
+        return allowed, refused
+
+    @staticmethod
+    def _refused_text(refused, limit=3):
+        shown = "; ".join(f"{os.path.basename(p) or p}: {r}" for p, r in refused[:limit])
+        more = f" (+{len(refused) - limit} more)" if len(refused) > limit else ""
+        return f"{len(refused)} skipped — {shown}{more}"
+
+    def unhide_checked(self):
+        tab = self.tabs["Hidden"]
+        checked = tab.checked_payloads()
+        if not checked:
+            tab.set_status("// tick at least one file first", theme.TEXT_DIM)
+            return
+        self._unhide(checked, bulk=False)
+
+    def unhide_all(self):
+        tab = self.tabs["Hidden"]
+        everything = tab.payloads()
+        if not everything:
+            tab.set_status("// nothing to unhide", theme.TEXT_DIM)
+            return
+        self._unhide(everything, bulk=True)
+
+    def _unhide(self, paths, bulk):
+        tab = self.tabs["Hidden"]
+        allowed, refused = self._split_by_refusal(paths, hidden_file_scanner.unhide_refusal_reason)
+        if not allowed:
+            tab.set_status("// " + self._refused_text(refused), theme.WARN)
+            return
+        n = len(allowed)
+        details = ("Skipped, never changed: " + self._refused_text(refused)) if refused else ""
+        if bulk:
+            ok = dialogs.confirm(
+                self, f"Unhide ALL {n} hidden file(s)?",
+                self.UNHIDE_MESSAGE + f" This changes every one of the {n} files listed.",
+                "Unhide All", items=allowed, details=details,
+                tick_label=f"I understand this unhides {n} file(s) at once")
+        else:
+            ok = dialogs.confirm(self, f"Unhide {n} file(s)?", self.UNHIDE_MESSAGE, "Unhide",
+                                 items=allowed, details=details)
+        if not ok:
+            return
+        done, failed = [], []
+        for path in allowed:
+            (done if hidden_file_scanner.unhide(path) else failed).append(path)
+        self.refresh()
+        text = f"// unhid {len(done)} file(s)"
+        if failed:
+            text += f" — {len(failed)} couldn't be changed (no permission?)"
+        if refused:
+            text += " — " + self._refused_text(refused)
+        tab.set_status(text, theme.WARN if failed else theme.NEON)
 
     def open_location(self, path):
         exists = os.path.isfile(path)
