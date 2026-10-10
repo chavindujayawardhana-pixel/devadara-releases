@@ -52,6 +52,15 @@ THREAT_TIERS = ("known_bad", "malware", "suspicious")
 SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
 LARGE_FILE_BYTES = 200 * 1024 * 1024  # quarantine reads the whole file into memory
 
+# Where the user can remove a startup entry themselves - DEVADARA never does.
+STARTUP_REMOVAL_HINTS = {
+    "registry": "Task Manager → Startup apps (or the registry key above)",
+    "scheduled_task": "Task Scheduler (taskschd.msc) → the task above",
+    "service": "Services (services.msc) → the service above",
+}
+PROGRAM_FILES = [os.path.normcase(os.path.abspath(p)) for p in
+                 (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")) if p]
+
 SOURCE_LABELS = {
     "last_scan": "Last scan",
     "downloads_watch": "Downloads auto-scan",
@@ -299,6 +308,9 @@ class ResultsPage(QWidget):
         self.quarantine_button = virus.add_action("Quarantine Checked", self.quarantine_checked, primary=True)
         self.ignore_button = virus.add_action("Ignore Checked", self.ignore_checked)
 
+        startup = self.tabs["Startup"]
+        self.review_button = startup.add_action("Review", self.review_startup, primary=True)
+
         hidden = self.tabs["Hidden"]
         self.unhide_all_button = hidden.add_action("Unhide All", self.unhide_all, primary=True)
         self.unhide_checked_button = hidden.add_action("Unhide Checked", self.unhide_checked)
@@ -490,29 +502,20 @@ class ResultsPage(QWidget):
         if item.get("from_store"):
             self._store.remove_flagged(item["file_path"])
 
-    def quarantine_files(self, items, tab):
-        """Shared by the Virus tab and Startup Review: warn, then quarantine
-        each allowed file. Returns the items actually quarantined."""
+    def _partition_for_quarantine(self, items):
         allowed, refused = [], []
         for item in items:
             reason = self._quarantine_refusal(item["file_path"])
             (allowed.append(item) if reason is None else refused.append((item["file_path"], reason)))
-        if not allowed:
-            tab.set_status("// " + self._refused_text(refused), theme.WARN)
-            return []
-        n = len(allowed)
-        message = ("This encrypts each file and moves it into DEVADARA's quarantine folder, so it "
-                   "can't be opened or run. Nothing is deleted - you can restore it later from the "
-                   "Quarantine tab.")
-        notes = []
+        return allowed, refused
+
+    def _large_file_note(self, allowed):
         large = [i for i in allowed if os.path.getsize(i["file_path"]) > LARGE_FILE_BYTES]
-        if large:
-            notes.append(f"{len(large)} large file(s): DEVADARA may pause while it encrypts them.")
-        if refused:
-            notes.append("Skipped, never touched: " + self._refused_text(refused))
-        if not dialogs.confirm(self, f"Quarantine {n} file(s)?", message, "Quarantine",
-                               items=[i["file_path"] for i in allowed], details="  ".join(notes)):
-            return []
+        return f"{len(large)} large file(s): DEVADARA may pause while it encrypts them." if large else ""
+
+    def _run_quarantine(self, allowed, refused, tab):
+        """Quarantine already-confirmed files and report. Returns the items
+        actually quarantined (original gone from its location)."""
         done, in_use, failed = [], [], []
         for item in allowed:
             entry_id = quarantine.quarantine_file(
@@ -536,6 +539,24 @@ class ResultsPage(QWidget):
             text += " — " + self._refused_text(refused)
         tab.set_status(text, theme.WARN if (in_use or failed) else theme.NEON)
         return done
+
+    def quarantine_files(self, items, tab):
+        """Virus tab: warn, then quarantine each allowed file."""
+        allowed, refused = self._partition_for_quarantine(items)
+        if not allowed:
+            tab.set_status("// " + self._refused_text(refused), theme.WARN)
+            return []
+        n = len(allowed)
+        message = ("This encrypts each file and moves it into DEVADARA's quarantine folder, so it "
+                   "can't be opened or run. Nothing is deleted - you can restore it later from the "
+                   "Quarantine tab.")
+        notes = [self._large_file_note(allowed)]
+        if refused:
+            notes.append("Skipped, never touched: " + self._refused_text(refused))
+        if not dialogs.confirm(self, f"Quarantine {n} file(s)?", message, "Quarantine",
+                               items=[i["file_path"] for i in allowed], details="  ".join(filter(None, notes))):
+            return []
+        return self._run_quarantine(allowed, refused, tab)
 
     def quarantine_checked(self):
         tab = self.tabs["Virus"]
@@ -593,6 +614,53 @@ class ResultsPage(QWidget):
         if refused:
             text += " — " + self._refused_text(refused)
         tab.set_status(text, theme.NEON)
+
+    # ─── Startup tab ───
+
+    def review_startup(self):
+        """One entry at a time: explain what the entry does, then (after the
+        warning) quarantine its TARGET FILE. The registry value, scheduled
+        task or service itself is never changed - afterwards it points to a
+        missing file, which is harmless, and the user can remove it."""
+        tab = self.tabs["Startup"]
+        checked = tab.checked_payloads()
+        if len(checked) != 1:
+            tab.set_status("// tick exactly one startup entry to review", theme.TEXT_DIM)
+            return
+        entry = checked[0]
+        target = entry.get("resolved_path") or ""
+        scan = entry.get("scan") or {}
+        item = {"file_path": target, "hash": scan.get("hash"), "tier": scan.get("tier"),
+                "threat": scan.get("threat_name") or f"Startup entry target ({entry.get('name') or entry.get('location')})"}
+        allowed, refused = self._partition_for_quarantine([item])
+        if not allowed:
+            reason = refused[0][1]
+            tab.set_status(f"// target not quarantined — {reason}", theme.WARN)
+            return
+        name = entry.get("name") or entry.get("location") or "startup entry"
+        hint = STARTUP_REMOVAL_HINTS.get(entry.get("source"), "the place it is registered")
+        message = ("Windows starts the target file below automatically. Reviewing this entry "
+                   "QUARANTINES THAT TARGET FILE: it is encrypted and moved into quarantine "
+                   "(restorable later from the Quarantine tab). The startup entry itself is NOT "
+                   "changed or deleted - afterwards it points to a missing file, which is harmless. "
+                   f"To remove the entry yourself: {hint}.")
+        notes = [self._large_file_note(allowed)]
+        if any(_norm(target).startswith(pf + os.sep) for pf in PROGRAM_FILES):
+            notes.append("This target is an installed program (Program Files) - make sure it isn't "
+                         "something you use.")
+        details = "  ".join(filter(None, notes))
+        items = [f"Entry:  {name}", f"Type:  {entry.get('source', '?')}",
+                 f"Location:  {entry.get('location', '?')}", f"Command:  {entry.get('command', '?')}",
+                 f"Target file:  {target}"]
+        if not dialogs.confirm(self, f"Review startup entry: {name}", message, "Quarantine Target",
+                               items=items, details=details):
+            return
+        for done in self._run_quarantine(allowed, [], tab):
+            # The same file may also be on the Virus tab.
+            for virus_item in self.virus_items():
+                if _norm(virus_item["file_path"]) == _norm(done["file_path"]):
+                    self._resolve_virus_item(virus_item)
+        self.refresh()  # the row stays, now "TARGET MISSING — quarantined ..."
 
     # ─── Quarantine tab ───
 
