@@ -42,6 +42,8 @@ import os
 import re
 import subprocess
 
+from devadara.hidden_process import hidden_window_kwargs
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 YARA_EXE = os.path.join(PROJECT_ROOT, "tools", "yara64.exe")
 RULES_DIR = os.path.join(PROJECT_ROOT, "data", "yara_rules")
@@ -89,6 +91,7 @@ def scan_file(file_path, timeout_seconds=15):
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            **hidden_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []

@@ -61,6 +61,7 @@ import psutil
 import winreg
 
 from devadara import scan_engine
+from devadara.hidden_process import hidden_window_kwargs
 from devadara.signature_scanner import load_trusted_publishers
 
 _SCHTASKS_EXE = os.path.join(
@@ -136,6 +137,7 @@ def list_scheduled_tasks(timeout_seconds=30):
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            **hidden_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []

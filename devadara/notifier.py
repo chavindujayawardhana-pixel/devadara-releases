@@ -38,6 +38,8 @@ courtesy, and a scan should never fail because the courtesy failed.
 import os
 import subprocess
 
+from devadara.hidden_process import hidden_window_kwargs
+
 # Same resolution as signature_scanner.py's _POWERSHELL_EXE: found via
 # SystemRoot rather than a bare "powershell.exe" on PATH, since PATH isn't
 # guaranteed intact in every context this might run under.
@@ -85,6 +87,7 @@ def notify(title, message, timeout_seconds=10):
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            **hidden_window_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return False

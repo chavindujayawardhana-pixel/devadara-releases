@@ -43,6 +43,8 @@ import re
 import subprocess
 from datetime import datetime, timezone
 
+from devadara.hidden_process import hidden_window_kwargs
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRUSTED_PUBLISHERS_PATH = os.path.join(PROJECT_ROOT, "data", "trusted_publishers.json")
 
@@ -270,6 +272,7 @@ def check_digital_signatures_batch(file_paths, trusted_publishers=None, timeout_
                 capture_output=True,
                 text=True,
                 timeout=chunk_timeout,
+                **hidden_window_kwargs(),
             )
         except (OSError, subprocess.SubprocessError) as exc:
             error = f"Could not run batch signature check: {exc}"
