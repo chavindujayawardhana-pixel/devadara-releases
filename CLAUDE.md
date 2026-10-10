@@ -50,8 +50,8 @@ integration script, not an automated test.
 
 `gui_app.py` is the entry point (single-instance guard, `--autostart`
 handling, `multiprocessing.freeze_support()`). `main_window.py` holds
-`MainWindow`: sidebar + page stack (Dashboard, Scan, Protection; Results and
-Settings are still placeholders), the tray icon, and the scan-running orbit
+`MainWindow`: sidebar + page stack (Dashboard, Scan, Protection, Results;
+Settings is still a placeholder), the tray icon, and the scan-running orbit
 animation (`components.ScanOrbitLogo` in the sidebar, `TrayOrbitAnimator`
 on the tray; layers `assets/app_icon_base.png` + `app_icon_orbit.png`).
 Colours/sizes are tokens in `theme.py` — don't add new colours.
@@ -77,6 +77,40 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
   processes, anything under `%SystemRoot%`, DEVADARA itself and recycled
   PIDs (start time re-checked). Every attempt is logged to
   `data/process_actions.jsonl`.
+- **Results page** — `results_page.py`, five tabs (Virus, Startup, Hidden,
+  Quarantine, Process). Data: the last MANUAL scan's results, kept in
+  memory only (`results_store.ResultsStore`, fed by `ScanWorker.results`;
+  dropped on quit, auto-scans don't replace it) + `data/scan_log.jsonl`
+  findings + the quarantine index. `reason_text()` builds the "why
+  flagged" text only from recorded fields (threat name, YARA rule, ML
+  score, signature facts) — display only, never a verdict change.
+  - **Every action goes through `dialogs.confirm()`** (the one warning
+    helper): plain-words message naming the file(s)/program and the exact
+    count, Cancel as the default (Enter/Escape cancel), action only on an
+    explicit click; `typed_word="DELETE"` for Delete Permanently,
+    `tick_label` for Unhide All. This includes Open in Explorer and small
+    reversible actions. Tests replace `dialogs.confirm`, so callers must
+    reach it as `dialogs.confirm(...)`, never via a from-import.
+  - Actions: Quarantine / Ignore (Virus), Review = quarantine the entry's
+    TARGET file, never touch the registry/task/service (Startup), Unhide /
+    Unhide All — Hidden attribute only, never Hidden+System files
+    (Hidden), Restore / Delete Permanently (Quarantine), Suspend / Resume /
+    Kill via the shared app-wide `ProcessGuard` (Process). Files under
+    `%SystemRoot%` are refused. The header "select all" box only ticks
+    rows — it must never run an action, and there is no "Ignore all".
+  - **Open in Explorer** = `file_location.open_in_explorer()`
+    (`explorer /select,` with the path as its own argument). Never
+    `os.startfile()` / `QDesktopServices.openUrl()` on a flagged file —
+    that would run it.
+  - **Ignore** = `devadara/ignore_list.py` (`data/ignored_files.json`,
+    git-ignored): pinned to path AND content fingerprint;
+    `scan_engine.evaluate_file()` returns the non-threat tier `"ignored"`
+    only while the file is unchanged. The old path-only `exceptions.py` is
+    not used for this. There is no un-ignore UI yet (planned for Settings).
+  - **Quit reminder** — a real quit (tray Exit, or X without a tray) with
+    pending last-scan results asks "Review now" (default) / "Quit anyway";
+    quitting only forgets them (nothing ignored). Never shown for
+    X-to-tray or during Windows logoff/shutdown (`commitDataRequest`).
 
 ## Architecture: the detection pipeline
 
