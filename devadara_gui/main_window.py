@@ -38,6 +38,7 @@ from devadara_gui.components import (
 )
 from devadara_gui.dashboard_page import DashboardPage
 from devadara_gui.protection_page import ProtectionPage
+from devadara_gui.results_page import ResultsPage
 from devadara_gui.scan_page import ScanPage
 
 # The processed (transparent-cornered) icon - used for the window/taskbar
@@ -57,12 +58,12 @@ NAV_ITEMS = [
     ("⚙", "Settings"),          # ⚙
 ]
 
-# Dashboard (index 0), Scan (index 1), and Protection (index 2) have real
-# content - see DashboardPage/ScanPage/ProtectionPage. The rest are still
-# placeholders; this list stays in NAV_ITEMS order starting from index 3
-# so PLACEHOLDER_PAGES[i] lines up with NAV_ITEMS[i + 3].
+# Dashboard (index 0), Scan (index 1), Protection (index 2) and Results
+# (index 3) have real content - see DashboardPage/ScanPage/ProtectionPage/
+# ResultsPage. The rest are still placeholders; this list stays in
+# NAV_ITEMS order starting from index 4 so PLACEHOLDER_PAGES[i] lines up
+# with NAV_ITEMS[i + 4].
 PLACEHOLDER_PAGES = [
-    ("Results", "// findings from last scan — click path to locate"),
     ("Settings", "// configure system preferences"),
 ]
 
@@ -405,6 +406,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.scan_page)
         self.protection_page = ProtectionPage(self.auto_scan_controller)
         self.stack.addWidget(self.protection_page)
+        self.results_page = ResultsPage(self.results_store, self.process_guard)
+        self.stack.addWidget(self.results_page)
         for title, subtitle in PLACEHOLDER_PAGES:
             self.stack.addWidget(PagePlaceholder(title, subtitle))
         layout.addWidget(self.stack, 1)

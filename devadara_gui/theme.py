@@ -414,6 +414,76 @@ def build_stylesheet():
             height: 0px;
         }}
 
+        /* ─── Results page (results_page.py) - the mockup's tab row + table ─── */
+        QFrame#resultsTabRow {{
+            border-bottom: 1px solid {BORDER};
+        }}
+
+        QPushButton#resultsTab {{
+            background: transparent;
+            border: none;
+            border-bottom: 2px solid transparent;
+            color: {TEXT_DIM};
+            padding: 11px 18px;
+        }}
+
+        QPushButton#resultsTab[compact="true"] {{
+            padding: 11px 8px;
+        }}
+
+        QPushButton#resultsTab:hover {{
+            color: {TEXT};
+        }}
+
+        QPushButton#resultsTab:checked {{
+            color: {NEON};
+            border-bottom-color: {NEON};
+        }}
+
+        QTableWidget#resultsTable {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            color: {TEXT};
+            gridline-color: transparent;
+            outline: none;
+        }}
+
+        QTableWidget#resultsTable QHeaderView::section {{
+            background: {rgba_css((0x00, 0xFF, 0xAA, 0x08))};
+            color: {NEON};
+            border: none;
+            border-bottom: 1px solid {BORDER};
+            padding: 10px 12px;
+        }}
+
+        QTableWidget#resultsTable::item {{
+            padding: 0px 12px;
+            border-bottom: 1px dashed {rgba_css((0x00, 0xFF, 0xAA, 0x14))};
+        }}
+
+        QTableWidget#resultsTable::item:hover {{
+            background: {rgba_css((0x00, 0xFF, 0xAA, 0x0A))};
+        }}
+
+        QTableWidget#resultsTable::indicator {{
+            width: 13px;
+            height: 13px;
+            border: 1px solid {TEXT_MUTE};
+            border-radius: 2px;
+            background: transparent;
+        }}
+
+        QTableWidget#resultsTable::indicator:checked {{
+            border-color: {NEON};
+            background: {rgba_css(BORDER_GLOW_RGBA)};
+        }}
+
+        QTableWidget#resultsTable QTableCornerButton::section {{
+            background: transparent;
+            border: none;
+        }}
+
         /* ─── Confirmation dialog (dialogs.py) ─── */
         QDialog#confirmDialog {{
             background: {PANEL_SOLID};
