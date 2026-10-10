@@ -41,6 +41,41 @@ def walk_and_scan(root, quick, known_bad_hashes, model, feature_columns, trusted
         "interrupted": False
     }
 
+    # A single file, not a directory - the Downloads auto-scan trigger
+    # passes one just-arrived file rather than a folder to walk. Purely
+    # additive: every existing caller passes a directory, for which
+    # os.path.isfile() is False and control falls straight through to the
+    # unchanged os.walk() loop below.
+    if os.path.isfile(root):
+        if is_excepted(root):
+            return outcome
+        if should_stop and should_stop():
+            outcome["interrupted"] = True
+            return outcome
+        if is_hidden(root):
+            outcome["hidden_files"].append(root)
+        if quick and os.path.splitext(root)[1].lower() not in scan_engine.EXECUTABLE_EXTENSIONS:
+            return outcome
+
+        result = scan_engine.evaluate_file(root, known_bad_hashes, model, feature_columns, trusted_publishers)
+        outcome["files_scanned"] += 1
+        tier = result.get("tier")
+        if tier == "known_bad":
+            outcome["known_bad_findings"].append(result)
+        elif tier in ("malware", "suspicious"):
+            outcome["to_review"].append(result)
+        elif tier == "trusted_signed":
+            outcome["trusted_signed_count"] += 1
+        else:
+            outcome["clean_count"] += 1
+
+        if on_progress:
+            on_progress(
+                outcome["files_scanned"], len(outcome["known_bad_findings"]), len(outcome["to_review"]),
+                0, root, tier, len(outcome["hidden_files"]),
+            )
+        return outcome
+
     files_since_progress = 0
 
     for dirpath, dirnames, filenames in os.walk(root):

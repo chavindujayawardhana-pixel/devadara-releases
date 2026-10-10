@@ -6,7 +6,8 @@ Manages scan exceptions (files and folders that should not be scanned).
 import json
 import os
 
-_EXCEPTIONS_FILE = os.path.join("data", "scan_exceptions.json")
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_EXCEPTIONS_FILE = os.path.join(PROJECT_ROOT, "data", "scan_exceptions.json")
 _cached_exceptions = None
 
 def _ensure_data_dir():

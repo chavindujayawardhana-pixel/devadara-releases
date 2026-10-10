@@ -21,9 +21,14 @@ that train_model.py already produced, and uses it to make predictions.
 import json
 import os
 
-import joblib
-import pandas as pd
 import pefile
+
+# joblib and pandas are imported inside the functions that use them, not
+# here: together they cost ~2.8s to import, and this module is pulled in
+# at GUI startup (via auto_scan_controller/scan_engine) long before any
+# model load or prediction happens - importing them lazily keeps that
+# cost off the path to the main window appearing. Python caches modules,
+# so every call after the first pays nothing extra.
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "malware_model.joblib")
@@ -42,6 +47,8 @@ def load_model_and_features():
     if not os.path.exists(MODEL_PATH) or not os.path.exists(FEATURE_LIST_PATH):
         print("[WARNING] ML model not found. Run 'python -m devadara.train_model' first.")
         return None, None
+
+    import joblib
 
     model = joblib.load(MODEL_PATH)
     with open(FEATURE_LIST_PATH, "r", encoding="utf-8") as f:
@@ -169,6 +176,8 @@ def predict_file(file_path, model, feature_columns):
 
     if features is None:
         return {"is_pe": False, "tier": "safe", "confidence": 0.0}
+
+    import pandas as pd
 
     # Build a single-row table with columns in the exact order the model
     # was trained on - scikit-learn matches columns by position, so order
