@@ -294,6 +294,10 @@ class ResultsPage(QWidget):
         hidden = self.tabs["Hidden"]
         self.unhide_all_button = hidden.add_action("Unhide All", self.unhide_all, primary=True)
         self.unhide_checked_button = hidden.add_action("Unhide Checked", self.unhide_checked)
+
+        quarantined = self.tabs["Quarantine"]
+        self.restore_button = quarantined.add_action("Restore Checked", self.restore_checked)
+        self.delete_button = quarantined.add_action("Delete Permanently", self.delete_checked)
         self._tab_buttons[0].setChecked(True)
 
         store.changed.connect(self.refresh)
@@ -459,6 +463,72 @@ class ResultsPage(QWidget):
         shown = "; ".join(f"{os.path.basename(p) or p}: {r}" for p, r in refused[:limit])
         more = f" (+{len(refused) - limit} more)" if len(refused) > limit else ""
         return f"{len(refused)} skipped — {shown}{more}"
+
+    # ─── Quarantine tab ───
+
+    @staticmethod
+    def _restore_refusal(entry):
+        destination = entry.get("original_path")
+        if not destination:
+            return "its original location isn't recorded"
+        if os.path.exists(destination):
+            return "a file already exists at its original location"
+        return None
+
+    def restore_checked(self):
+        tab = self.tabs["Quarantine"]
+        checked = tab.checked_payloads()
+        if not checked:
+            tab.set_status("// tick at least one file first", theme.TEXT_DIM)
+            return
+        allowed, refused = [], []
+        for entry in checked:
+            reason = self._restore_refusal(entry)
+            (allowed.append(entry) if reason is None else refused.append((entry["original_path"], reason)))
+        if not allowed:
+            tab.set_status("// " + self._refused_text(refused), theme.WARN)
+            return
+        n = len(allowed)
+        message = ("This decrypts each file and puts it back at its original location, where it "
+                   "can be opened and run again. Only restore a file you are sure is safe. If it "
+                   "was flagged by its fingerprint, the next scan will flag it again unless you "
+                   "also choose Ignore for it on the Virus tab.")
+        details = ("Skipped, left in quarantine: " + self._refused_text(refused)) if refused else ""
+        if not dialogs.confirm(self, f"Restore {n} file(s) from quarantine?", message, "Restore",
+                               items=[e["original_path"] for e in allowed], details=details):
+            return
+        done, failed = [], []
+        for entry in allowed:
+            (done if quarantine.restore_file(entry["id"]) else failed).append(entry)
+        self.refresh()
+        text = f"// restored {len(done)} file(s) to their original location"
+        if failed:
+            text += f" — {len(failed)} couldn't be restored (left in quarantine)"
+        if refused:
+            text += " — " + self._refused_text(refused)
+        tab.set_status(text, theme.WARN if failed else theme.NEON)
+
+    def delete_checked(self):
+        tab = self.tabs["Quarantine"]
+        checked = tab.checked_payloads()
+        if not checked:
+            tab.set_status("// tick at least one file first", theme.TEXT_DIM)
+            return
+        n = len(checked)
+        message = ("This permanently erases the encrypted copies from quarantine. They can NOT be "
+                   "restored afterwards - this cannot be undone.")
+        if not dialogs.confirm(self, f"Permanently delete {n} quarantined file(s)?", message,
+                               "Delete Permanently", items=[e.get("original_path") or e["id"] for e in checked],
+                               typed_word="DELETE"):
+            return
+        done = [e for e in checked if quarantine.delete_permanently(e["id"])]
+        self.refresh()
+        failed = n - len(done)
+        tab.set_status(f"// permanently deleted {len(done)} file(s)"
+                       + (f" — {failed} couldn't be deleted" if failed else ""),
+                       theme.WARN if failed else theme.NEON)
+
+    # ─── Hidden tab ───
 
     def unhide_checked(self):
         tab = self.tabs["Hidden"]
