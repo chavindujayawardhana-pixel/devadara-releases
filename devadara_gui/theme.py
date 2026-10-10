@@ -491,9 +491,11 @@ def build_stylesheet():
             background: transparent;
         }}
 
+        /* 11px + the 1px border = 13px outside, exactly the row boxes
+           (results_page.CHECK_SIZE, drawn into a 13px square). */
         QCheckBox#resultsSelectAll::indicator {{
-            width: 13px;
-            height: 13px;
+            width: 11px;
+            height: 11px;
             border: 1px solid {TEXT_MUTE};
             border-radius: 2px;
             background: transparent;

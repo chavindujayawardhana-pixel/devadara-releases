@@ -22,7 +22,7 @@ this page ever acts on its own.
 
 import os
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -34,7 +34,9 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QStackedWidget,
+    QStyle,
     QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -137,6 +139,54 @@ def reason_text(result):
     return "; ".join(parts) or None
 
 
+CHECK_SIZE = 13  # px - row boxes and the header "select all" box (theme.py indicator rules)
+
+
+def centered_check_rect(cell):
+    """The one place a checkbox's position is decided: CHECK_SIZE square,
+    centred horizontally and vertically in the cell - used for every row
+    box and for the header box, so they always line up exactly."""
+    return QRect(cell.x() + (cell.width() - CHECK_SIZE) // 2,
+                 cell.y() + (cell.height() - CHECK_SIZE) // 2, CHECK_SIZE, CHECK_SIZE)
+
+
+class _CenteredCheckDelegate(QStyledItemDelegate):
+    """Column 0: draws the row's check box centred in the cell (Qt's own
+    placement depends on the Windows style and top-aligns it in tall rows),
+    styled by the same QSS ::indicator rules. A click anywhere in the cell
+    toggles it - selection only, no action."""
+
+    def paint(self, painter, option, index):
+        cell = QStyleOptionViewItem(option)
+        self.initStyleOption(cell, index)
+        cell.features &= ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        style = cell.widget.style() if cell.widget else QStyle()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, cell, painter, cell.widget)  # hover background
+        state = index.data(Qt.ItemDataRole.CheckStateRole)
+        if state is None:
+            return
+        box = QStyleOptionViewItem(option)
+        box.rect = centered_check_rect(option.rect)
+        box.state &= ~(QStyle.StateFlag.State_On | QStyle.StateFlag.State_Off | QStyle.StateFlag.State_NoChange)
+        box.state |= {Qt.CheckState.Checked.value: QStyle.StateFlag.State_On,
+                      Qt.CheckState.PartiallyChecked.value: QStyle.StateFlag.State_NoChange}.get(
+            Qt.CheckState(state).value, QStyle.StateFlag.State_Off)
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck, box, painter, cell.widget)
+
+    def editorEvent(self, event, model, option, index):
+        if index.data(Qt.ItemDataRole.CheckStateRole) is None:
+            return False
+        if event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick):
+            return option.rect.contains(event.position().toPoint())
+        if (event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton
+                and option.rect.contains(event.position().toPoint())):
+            checked = Qt.CheckState(index.data(Qt.ItemDataRole.CheckStateRole)) == Qt.CheckState.Checked
+            model.setData(index, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked,
+                          Qt.ItemDataRole.CheckStateRole)
+            return True
+        return False
+
+
 class _MiddleElideDelegate(QStyledItemDelegate):
     """Paths elide in the middle (drive ... file name); every other column
     elides at the end so the start of a reason stays readable."""
@@ -182,6 +232,8 @@ class ResultsTab(QWidget):
         self.table.setWordWrap(False)
         self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
         self._path_delegate = _MiddleElideDelegate(self.table)
+        self._check_delegate = _CenteredCheckDelegate(self.table)
+        self.table.setItemDelegateForColumn(0, self._check_delegate)
         self.table.setItemDelegateForColumn(self._path_column, self._path_delegate)
         self.table.setMouseTracking(True)
         # Columns are always fitted to the width (see _fit_columns).
@@ -197,6 +249,7 @@ class ResultsTab(QWidget):
         # unticks rows - it is never connected to any action; the action
         # buttons below still warn first, naming the count and the files.
         self.select_all = QCheckBox(header)
+        self.select_all.setFixedSize(CHECK_SIZE, CHECK_SIZE)  # exactly the row boxes' size
         self.select_all.setObjectName("resultsSelectAll")
         self.select_all.setTristate(True)  # shows "some ticked"; clicks are handled below
         self.select_all.setToolTip("Tick or untick every row. This only selects - it does not run any action.")
@@ -325,13 +378,10 @@ class ResultsTab(QWidget):
 
     def _place_select_all(self, *_):
         header = self.table.horizontalHeader()
-        size = self.select_all.sizeHint()
-        self.select_all.resize(size)
-        # Lined up with the rows' own check boxes, which sit after the
-        # item padding (theme.py), not centred in the column.
-        indicator_left = self.CELL_PADDING + 7
-        self.select_all.move(header.sectionViewportPosition(0) + indicator_left - (size.width() - 13) // 2,
-                             (header.height() - size.height()) // 2)
+        cell = QRect(header.sectionViewportPosition(0), 0, header.sectionSize(0), header.height())
+        # Same centring rule as the row boxes, in the same column - and the
+        # header viewport starts at the same x as the table's viewport.
+        self.select_all.move(centered_check_rect(cell).topLeft())
 
     def _row_check_items(self):
         return [self.table.item(r, 0) for r in range(len(self._payloads))]
