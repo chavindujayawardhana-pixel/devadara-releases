@@ -13,6 +13,7 @@ letter_spaced_font() returns a QFont with Qt's native letter-spacing applied.
 """
 
 import os
+import tempfile
 
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
@@ -108,9 +109,40 @@ def letter_spaced_font(size=11, bold=False, spacing=1.0, black=False):
     return font
 
 
+# Check-box marks for the QSS ::indicator rules. Once QSS styles an
+# indicator's border/background Qt stops drawing its native check glyph,
+# so "ticked" needs an explicit image. Drawn as line segments (like
+# components.TreeCheckbox), never a font glyph, in the NEON token.
+_INDICATOR_SVGS = {
+    "check": ('<polyline points="2.5,6.8 5.3,9.6 10.5,3.4" fill="none" stroke="{color}" '
+              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>'),
+    "dash": '<line x1="3" y1="6.5" x2="10" y2="6.5" stroke="{color}" stroke-width="2" stroke-linecap="round"/>',
+}
+
+
+def indicator_image_url(name, color=NEON):
+    """A 13x13 SVG mark as a QSS url(...) value, written once to a local
+    temp folder (QSS can only load images from files/resources). Returns
+    "none" if it can't be written - the indicator then just has no mark."""
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 13 13">'
+           + _INDICATOR_SVGS[name].format(color=color) + "</svg>")
+    try:
+        folder = os.path.join(tempfile.gettempdir(), "devadara_gui")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, f"indicator_{name}_{color.lstrip('#')}.svg")
+        if not os.path.exists(path) or open(path, encoding="utf-8").read() != svg:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(svg)
+    except OSError:
+        return "none"
+    return f'url("{path.replace(os.sep, "/")}")'
+
+
 def build_stylesheet():
     """One QSS string for QApplication.setStyleSheet() - see module docstring
     for what's deliberately NOT handled here (glow, letter-spacing)."""
+    check_image = indicator_image_url("check")
+    dash_image = indicator_image_url("dash")
     return f"""
         * {{
             font-family: "{FONT_FAMILY}";
@@ -485,6 +517,7 @@ def build_stylesheet():
         QTableWidget#resultsTable::indicator:checked {{
             border-color: {NEON};
             background: {rgba_css(BORDER_GLOW_RGBA)};
+            image: {check_image};
         }}
 
         QCheckBox#resultsSelectAll {{
@@ -504,11 +537,15 @@ def build_stylesheet():
         QCheckBox#resultsSelectAll::indicator:checked {{
             border-color: {NEON};
             background: {rgba_css(BORDER_GLOW_RGBA)};
+            image: {check_image};
         }}
 
+        /* Three clearly different states: none = empty box, some = dash,
+           all = check mark. */
         QCheckBox#resultsSelectAll::indicator:indeterminate {{
             border-color: {NEON};
             background: {rgba_css((0x00, 0xFF, 0xAA, 0x14))};
+            image: {dash_image};
         }}
 
         QCheckBox#resultsSelectAll::indicator:disabled {{
@@ -558,6 +595,7 @@ def build_stylesheet():
         QDialog#confirmDialog QCheckBox::indicator:checked {{
             border-color: {NEON};
             background: {rgba_css(BORDER_GLOW_RGBA)};
+            image: {check_image};
         }}
 
         QLineEdit#confirmTyped {{
