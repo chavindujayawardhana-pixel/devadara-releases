@@ -517,9 +517,10 @@ class MainWindow(QMainWindow):
         QApplication.instance().removeEventFilter(self)
         if self.tray_icon is None or self.scan_page.is_scan_running():
             return
-        # Same path as pressing X - closeEvent hides to the tray, watchers
-        # keep running.
-        self.close()
+        # Hide to the tray, watchers keep running - directly, not via
+        # close(), so this automatic hide never shows the X-button's
+        # unreviewed-results reminder.
+        self.hide()
 
     def eventFilter(self, watched, event):
         # Only installed while an auto-hide is pending.
@@ -572,13 +573,14 @@ class MainWindow(QMainWindow):
     def _on_session_ending(self, *_):
         self._session_ending = True
 
-    def _ok_to_quit(self):
-        """The unreviewed-results reminder, for a REAL quit only (tray Exit,
-        or X when there's no tray) - never for X-to-tray, and never while
-        Windows is logging off or shutting down. "Review now" (the default;
-        Enter/Escape) cancels the quit and opens the Results page. "Quit
-        anyway" just drops the in-memory results - nothing is ignored or
-        marked safe, so the next scan flags those files again."""
+    def _ok_to_quit(self, action_label="Quit anyway", verb="Quitting"):
+        """The unreviewed-results reminder: before a real quit (tray Exit,
+        or X when there's no tray) and before X hides the window to the
+        tray - never while Windows is logging off or shutting down.
+        "Review now" (the default; Enter/Escape) keeps the window open on
+        the Results page. The other button only forgets the in-memory
+        results - nothing is ignored or marked safe, so the next scan flags
+        those files again."""
         if self._session_ending:
             return True
         pending = self.results_page.pending_count()
@@ -587,8 +589,8 @@ class MainWindow(QMainWindow):
         if dialogs.confirm(
                 self, "Unreviewed results",
                 f"There are {pending} results you have not acted on. Do you want to review them now?",
-                "Quit anyway",
-                details=("Quitting just forgets them - nothing is marked safe or ignored, "
+                action_label,
+                details=(f"{verb} just forgets them - nothing is marked safe or ignored, "
                          "and the next scan will flag these files again."),
                 cancel_label="Review now"):
             return True
@@ -626,6 +628,14 @@ class MainWindow(QMainWindow):
             # reminder comes first, before anything is stopped.
             event.ignore()
             return
+        # With a tray, X hides - but pending last-scan results get the same
+        # reminder first. "Close anyway" forgets them (memory only), so the
+        # window reopens on an empty Results page.
+        forget_results = (self.tray_icon is not None and not self._session_ending
+                          and self.results_page.pending_count() > 0)
+        if forget_results and not self._ok_to_quit("Close anyway", "Closing"):
+            event.ignore()
+            return
         if self.scan_page.is_scan_running():
             box = QMessageBox(self)
             box.setWindowTitle("Scan is running")
@@ -647,6 +657,8 @@ class MainWindow(QMainWindow):
             event.accept()
             return
 
+        if forget_results:
+            self.results_store.clear()
         event.ignore()
         self.hide()
 

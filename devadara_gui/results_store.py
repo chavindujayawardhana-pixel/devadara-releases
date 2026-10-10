@@ -42,6 +42,17 @@ class ResultsStore(QObject):
         self.processes = list(results.get("processes", []))
         self.changed.emit()
 
+    def clear(self):
+        """Forget the last scan (the X-button "Close anyway"). Memory only -
+        nothing is ignored, quarantined or marked safe, and the scan log is
+        untouched, so the next scan flags the same files again."""
+        self.scanned_at = None
+        self.flagged = []
+        self.hidden = []
+        self.startup = []
+        self.processes = []
+        self.changed.emit()
+
     def remove_flagged(self, file_path):
         self.flagged = [r for r in self.flagged if not _same_path(r["file_path"], file_path)]
         self.changed.emit()

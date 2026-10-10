@@ -107,10 +107,14 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
     `scan_engine.evaluate_file()` returns the non-threat tier `"ignored"`
     only while the file is unchanged. The old path-only `exceptions.py` is
     not used for this. There is no un-ignore UI yet (planned for Settings).
-  - **Quit reminder** — a real quit (tray Exit, or X without a tray) with
-    pending last-scan results asks "Review now" (default) / "Quit anyway";
-    quitting only forgets them (nothing ignored). Never shown for
-    X-to-tray or during Windows logoff/shutdown (`commitDataRequest`).
+  - **Unreviewed-results reminder** — with pending last-scan results, a
+    real quit (tray Exit, or X without a tray) asks "Review now" (default)
+    / "Quit anyway", and X-to-tray asks "Review now" / "Close anyway".
+    "Close anyway" hides to the tray (watchers keep running) and clears the
+    in-memory results (`ResultsStore.clear()`); either way they're only
+    forgotten — nothing ignored, quarantined or marked safe, scan-log
+    findings stay. Never shown for the logon auto-hide or during Windows
+    logoff/shutdown (`commitDataRequest`).
 
 ## Architecture: the detection pipeline
 
