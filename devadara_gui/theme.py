@@ -354,12 +354,20 @@ def build_stylesheet():
             border-radius: 3px;
         }}
 
-        QPlainTextEdit#scanLogPanel {{
+        QListWidget#scanLogPanel {{
             background: rgba(0, 0, 0, 0.4);
             border: 1px solid {BORDER};
             border-radius: 4px;
             color: {TEXT_DIM};
             padding: 8px;
+            outline: none;
+        }}
+
+        QListWidget#scanLogPanel::item {{
+            border: none;
+            padding: 0px;
+            color: {TEXT_DIM};
+            background: transparent;
         }}
 
         /* ─── Page header ─── */

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from devadara_gui import theme
-from devadara_gui.components import Button, Card
+from devadara_gui.components import Button, Card, ElidedLabel
 
 
 class _MiniStatsBox(QFrame):
@@ -121,8 +121,9 @@ class MiniFormPopup(QWidget):
         content.addLayout(self._build_header())
         content.addWidget(self._build_divider())
 
-        self._path_label = QLabel("// initializing scan engine...")
-        self._path_label.setWordWrap(True)
+        # One line, middle-elided, fixed height - a long path must never
+        # grow or reflow the popup (full path in the tooltip).
+        self._path_label = ElidedLabel("// initializing scan engine...")
         self._path_label.setFont(theme.letter_spaced_font(size=7, spacing=0.2))
         self._set_path_color(theme.CYAN)
         content.addWidget(self._path_label)

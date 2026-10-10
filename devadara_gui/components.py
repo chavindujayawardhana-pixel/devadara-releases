@@ -26,8 +26,8 @@ instead of duplicating styling inline.
 
 from PySide6.QtCore import (Property, QEasingCurve, QElapsedTimer, QPointF, QPropertyAnimation,
                             QRectF, Qt, QTimer, Signal)
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from devadara_gui import theme
 
@@ -393,6 +393,53 @@ class HeroStatusCard(QFrame):
             f'Real-time protection <span style="color:{accent};">[{status_word}]</span>'
             f" · Last scan: {last_scan_text}"
         )
+
+
+class ElidedLabel(QLabel):
+    """A one-line label for live paths: long text is elided in the MIDDLE
+    (drive … file name, like the Results page), it never wraps,
+    its height never changes and it never asks for more width - so a long
+    path can't make a layout jump or widen a window/popup. The full text is
+    always in the tooltip; fullText() returns it."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self._full_text = ""
+        self.setWordWrap(False)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setText(text)
+
+    def fullText(self):
+        return self._full_text
+
+    def setText(self, text):
+        self._full_text = text or ""
+        self.setToolTip(self._full_text)
+        self._refresh()
+
+    def setFont(self, font):
+        super().setFont(font)
+        self._refresh()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._refresh()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)  # a stylesheet/font change can alter metrics
+        if event.type() in (event.Type.FontChange, event.Type.StyleChange):
+            self._refresh()
+
+    def _refresh(self):
+        metrics = QFontMetrics(self.font())
+        width = max(0, self.contentsRect().width() - 2)
+        super().setText(metrics.elidedText(self._full_text, Qt.TextElideMode.ElideMiddle, width))
+        # One line, whatever the text: the height is fixed from the font
+        # plus this label's own margins/padding.
+        margins = self.contentsMargins()
+        height = metrics.height() + margins.top() + margins.bottom() + 2 * self.margin()
+        if self.height() != height or self.minimumHeight() != height:
+            self.setFixedHeight(height)
 
 
 class StatCard(QFrame):

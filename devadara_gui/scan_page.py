@@ -19,15 +19,17 @@ import os
 from collections import deque, namedtuple
 
 import psutil
-from PySide6.QtCore import QThread, QTimer, Qt, Signal
+from PySide6.QtCore import QSize, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
+    QAbstractItemView,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QStackedWidget,
     QVBoxLayout,
@@ -40,7 +42,9 @@ from devadara.usb_monitor import list_removable_drives
 
 from devadara_gui import theme
 from devadara_gui.auto_scan_controller import DOWNLOADS_FOLDER
-from devadara_gui.components import Button, Card, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow
+from devadara_gui.components import (
+    Button, Card, ElidedLabel, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow,
+)
 from devadara_gui.mini_form_popup import MiniFormPopup
 from devadara_gui.scan_worker import ScanWorker, format_elapsed, gather_persistence_entries
 
@@ -867,6 +871,7 @@ class ScanProgressView(QWidget):
     _CHECKED_TICK_MS = 40
     _PATH_CYCLE_MS = 150
     _RECENT_PATHS_MAXLEN = 8
+    _LOG_MAX_LINES = 2000
 
     fix_all_requested = Signal()
     close_requested = Signal()
@@ -892,8 +897,9 @@ class ScanProgressView(QWidget):
 
         target_card = Card(title="Current Target", badge="[RUNNING]")
 
-        self._path_label = QLabel()
-        self._path_label.setWordWrap(True)
+        # One line, middle-elided, fixed height - a long path must never
+        # make the progress bar/stats below jump (full path in the tooltip).
+        self._path_label = ElidedLabel()
         self._path_label.setFont(theme.letter_spaced_font(size=9, spacing=0.3))
         self._path_label.setStyleSheet(
             f"color: {theme.CYAN}; border-left: 2px solid {theme.CYAN}; padding-left: 8px;"
@@ -935,10 +941,16 @@ class ScanProgressView(QWidget):
         stats_row.addWidget(self._hidden_stat)
         section_layout.addLayout(stats_row)
 
-        self._log_panel = QPlainTextEdit()
+        # Recent files, one line each, middle-elided (full path on hover);
+        # never wraps and never scrolls sideways.
+        self._log_panel = QListWidget()
         self._log_panel.setObjectName("scanLogPanel")
-        self._log_panel.setReadOnly(True)
-        self._log_panel.setMaximumBlockCount(2000)
+        self._log_panel.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._log_panel.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._log_panel.setWordWrap(False)
+        self._log_panel.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self._log_panel.setUniformItemSizes(True)
+        self._log_panel.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._log_panel.setFixedHeight(140)
         self._log_panel.setFont(theme.letter_spaced_font(size=8, spacing=0.2))
         self._log_panel.hide()
@@ -1050,7 +1062,15 @@ class ScanProgressView(QWidget):
 
     def append_log(self, line):
         if line:
-            self._log_panel.appendPlainText(line)
+            item = QListWidgetItem(line)
+            item.setToolTip(line)
+            # One text line per entry, like the old plain-text log - the
+            # native style would otherwise pad each row.
+            item.setSizeHint(QSize(0, self._log_panel.fontMetrics().lineSpacing()))
+            self._log_panel.addItem(item)
+            while self._log_panel.count() > self._LOG_MAX_LINES:
+                self._log_panel.takeItem(0)
+            self._log_panel.scrollToBottom()
 
     def show_finished(self, checked, threats, hidden, elapsed):
         self._checked_timer.stop()
