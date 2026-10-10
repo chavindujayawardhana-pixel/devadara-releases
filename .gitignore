@@ -2,3 +2,22 @@ venv/
 __pycache__/
 *.pyc
 .claude/
+
+# Runtime / per-machine state
+data/gui_state.json
+data/gui_activity_log.json
+data/memory_hashes.json
+data/scan_log.jsonl
+data/scan_exceptions.json
+data/quarantine_index.json
+data/quarantine/
+data/*.tmp
+
+# Secrets
+.env
+*.env
+*.key
+
+# Scratch dumps
+*_dump.txt
+dump_*.txt
