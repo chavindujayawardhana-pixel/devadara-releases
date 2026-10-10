@@ -46,7 +46,7 @@ from devadara.hidden_file_scanner import describe_attributes
 from devadara_gui import dialogs, theme
 from devadara_gui.components import Button, PageHeader
 from devadara_gui.file_location import open_in_explorer
-from devadara_gui.process_guard import still_same_process
+from devadara_gui.process_guard import refusal_reason, still_same_process
 
 THREAT_TIERS = ("known_bad", "malware", "suspicious")
 SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
@@ -181,7 +181,7 @@ class ResultsTab(QWidget):
 
         QTimer.singleShot(0, self._fit_columns)
 
-    PATH_SHARE = 0.4      # the path column never gets less than this share...
+    PATH_SHARE = 0.3      # the path column never gets less than this share...
     PATH_MIN = 160        # ...or this many pixels, however narrow the window
     CHECK_WIDTH = 36
     CELL_PADDING = 12     # theme.py: QTableWidget#resultsTable::item padding
@@ -314,6 +314,12 @@ class ResultsPage(QWidget):
         hidden = self.tabs["Hidden"]
         self.unhide_all_button = hidden.add_action("Unhide All", self.unhide_all, primary=True)
         self.unhide_checked_button = hidden.add_action("Unhide Checked", self.unhide_checked)
+
+        process = self.tabs["Process"]
+        self.suspend_button = process.add_action("Suspend", lambda: self.process_action("suspend"))
+        self.resume_button = process.add_action("Resume", lambda: self.process_action("resume"))
+        self.kill_button = process.add_action("Kill", lambda: self.process_action("kill"))
+        process.table.itemChanged.connect(self._update_process_buttons)
 
         quarantined = self.tabs["Quarantine"]
         self.restore_button = quarantined.add_action("Restore Checked", self.restore_checked)
@@ -459,7 +465,16 @@ class ResultsPage(QWidget):
             rows.append(([proc.get("name") or "?", str(proc["pid"]), proc.get("exe") or "—",
                           "; ".join(proc.get("reasons") or []) or "—", self.process_status(proc)], proc))
         self.tabs["Process"].set_rows(rows)
+        self._update_process_buttons()
         return len(rows)
+
+    def _update_process_buttons(self, *_):
+        """Resume only for a program DEVADARA itself suspended (shared
+        ProcessGuard - the behavior popup's suspensions count too)."""
+        if not hasattr(self, "resume_button"):
+            return
+        checked = self.tabs["Process"].checked_payloads()
+        self.resume_button.setEnabled(len(checked) == 1 and self._guard.is_suspended(checked[0]))
 
     # ─── actions (every one behind dialogs.confirm) ───
 
@@ -661,6 +676,34 @@ class ResultsPage(QWidget):
                 if _norm(virus_item["file_path"]) == _norm(done["file_path"]):
                     self._resolve_virus_item(virus_item)
         self.refresh()  # the row stays, now "TARGET MISSING — quarantined ..."
+
+    # ─── Process tab ───
+
+    def process_action(self, action):
+        """Suspend / Resume / Kill one ticked program: the Phase 4 refusal
+        rules first (process_guard), then the shared warning, then
+        ProcessGuard.perform() - which re-checks everything right before it
+        acts and logs every attempt."""
+        tab = self.tabs["Process"]
+        checked = tab.checked_payloads()
+        if len(checked) != 1:
+            tab.set_status("// tick exactly one program", theme.TEXT_DIM)
+            return
+        proc = checked[0]
+        reason = refusal_reason(proc)
+        if reason is None and not still_same_process(proc):
+            reason = "it has exited or its PID was reused"
+        if reason is None and action == "resume" and not self._guard.is_suspended(proc):
+            reason = "it wasn't suspended by DEVADARA"
+        if reason is not None:
+            tab.set_status(f"// {action} refused — {reason}", theme.WARN)
+            return
+        if not dialogs.confirm_process_action(self, action, proc):
+            return
+        ok, message = self._guard.perform(action, proc)
+        self.refresh()
+        tab.set_status(f"// {proc.get('name')} (PID {proc['pid']}): {message}",
+                       theme.NEON if ok else theme.WARN)
 
     # ─── Quarantine tab ───
 
