@@ -130,6 +130,8 @@ class Button(QPushButton):
 
     def setEnabled(self, enabled):
         super().setEnabled(enabled)
+        # A disabled button must not look clickable: no pointing hand.
+        self.setCursor(Qt.CursorShape.PointingHandCursor if enabled else Qt.CursorShape.ArrowCursor)
         self._update_glow()
 
 
