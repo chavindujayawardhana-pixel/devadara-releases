@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from devadara import scan_log
 from devadara.self_integrity import BAD_SIGNATURE, PROBLEMS
-from devadara_gui import dialogs, theme
+from devadara_gui import dialogs, protection_modules, scan_history, theme
 from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
 from devadara_gui.process_guard import ProcessGuard
@@ -170,7 +170,7 @@ class Sidebar(QFrame):
         box_layout.setContentsMargins(12, 12, 12, 12)
         box_layout.setSpacing(8)
 
-        label = QLabel("// REAL-TIME")
+        label = QLabel("// PROTECTION")
         label.setObjectName("statusLabel")
         label.setFont(theme.letter_spaced_font(size=7, bold=True, spacing=2))
         box_layout.addWidget(label)
@@ -191,13 +191,21 @@ class Sidebar(QFrame):
         row.addStretch(1)
 
         box_layout.addLayout(row)
+
+        # Shown only while no scan was ever finished - so SECURED never
+        # reads as "already scanned" (same text as the Dashboard hero).
+        self._scan_note = QLabel(scan_history.NO_SCAN_YET)
+        self._scan_note.setObjectName("statusLabel")
+        self._scan_note.setFont(theme.letter_spaced_font(size=7, spacing=1))
+        self._scan_note.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        box_layout.addWidget(self._scan_note)
         wrap_layout.addWidget(box)
 
         self._blink_timer = QTimer(self)
         self._blink_timer.timeout.connect(self._toggle_dot)
 
-        # Starts as STARTING... - never ACTIVE - until the controller
-        # reports the watchers are really running (set_realtime_state).
+        # Starts as STARTING... - never SECURED - until the controller
+        # reports the watchers are really running (set_protection_level).
         self._dot_color = QColor(theme.TEXT_DIM)
         self._status_value.setText("STARTING…")
         self._status_value.setStyleSheet(f"color: {theme.TEXT_DIM};")
@@ -205,22 +213,28 @@ class Sidebar(QFrame):
 
         return wrap
 
-    def set_realtime_state(self, active):
-        """Connected to AutoScanController.realtime_state_changed."""
-        if active:
-            self._dot_color = QColor(theme.NEON)
-            self._status_value.setText("ACTIVE")
-            self._status_value.setStyleSheet(f"color: {theme.NEON};")
-            self._status_value.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=8))
+    def set_protection_level(self, level):
+        """Connected to AutoScanController.protection_level_changed - the
+        same label and colour as the Dashboard (protection_modules.
+        LEVEL_VIEW). The dot blinks while anything is protecting."""
+        label, token = protection_modules.LEVEL_VIEW.get(
+            level, protection_modules.LEVEL_VIEW[protection_modules.STARTING])
+        color = getattr(theme, token)
+        running = level in (protection_modules.SECURED, protection_modules.PARTIAL)
+        self._dot_color = QColor(color)
+        self._status_value.setText(label)
+        self._status_value.setStyleSheet(f"color: {color};")
+        self._status_value.setGraphicsEffect(theme.glow_effect(color, blur=8) if running else None)
+        if running:
             self._blink_timer.start(1000)
         else:
-            self._dot_color = QColor(theme.DANGER)
-            self._status_value.setText("OFF")
-            self._status_value.setStyleSheet(f"color: {theme.DANGER};")
-            self._status_value.setGraphicsEffect(None)
             self._blink_timer.stop()
         self._dot_on = True
         self._update_dot()
+
+    def set_scan_done(self, done):
+        """Hide "No scan yet" once a scan has been recorded."""
+        self._scan_note.setVisible(not done)
 
     def _toggle_dot(self):
         self._dot_on = not self._dot_on
@@ -404,7 +418,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
-        self.dashboard_page = DashboardPage(navigate=self.navigate_to)
+        self.dashboard_page = DashboardPage(navigate=self.navigate_to,
+                                            config_store=self.auto_scan_controller.config_store)
         self.stack.addWidget(self.dashboard_page)
         self.scan_page = ScanPage(navigate=self.navigate_to, main_window=self,
                                    controller=self.auto_scan_controller)
@@ -424,8 +439,9 @@ class MainWindow(QMainWindow):
         self.setMaximumSize(self.MAX_WIDTH, self.MAX_HEIGHT)
         self.resize(self.MAX_WIDTH, self.MAX_HEIGHT)
 
-        self.auto_scan_controller.realtime_state_changed.connect(self.sidebar.set_realtime_state)
-        self.auto_scan_controller.realtime_state_changed.connect(self.dashboard_page.set_realtime_state)
+        self.auto_scan_controller.protection_level_changed.connect(self.sidebar.set_protection_level)
+        self.auto_scan_controller.protection_level_changed.connect(self.dashboard_page.set_protection_level)
+        self.refresh_last_scan()
 
         self._build_tray_icon()
 
@@ -501,13 +517,19 @@ class MainWindow(QMainWindow):
             )
         self.behavior_popup.show_alert(alert)
 
+    def refresh_last_scan(self):
+        """Sidebar "No scan yet" + Dashboard hero, from scan_history."""
+        self.sidebar.set_scan_done(
+            scan_history.last_scan(self.auto_scan_controller.config_store) is not None)
+        self.dashboard_page.refresh_last_scan()
+
     def start_background_init(self):
         """Call right after show(). Loading the ML model is a real ~3-7s
         blocking call that has to stay on the GUI thread (see
         auto_scan_controller.py), so it's delayed long enough for the
         window to actually be painted first rather than raced against the
         first paint. Watchers only start once it's done, so a detection
-        can never race an unloaded model, and the sidebar only says ACTIVE
+        can never race an unloaded model, and the sidebar only says SECURED
         once they have."""
         QTimer.singleShot(150, self.auto_scan_controller.load_model)
         QTimer.singleShot(INTEGRITY_CHECK_DELAY_MS, self.integrity_checker.start)

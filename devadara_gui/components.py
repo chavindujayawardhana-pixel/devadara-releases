@@ -24,12 +24,14 @@ instead of duplicating styling inline.
                   (sidebar header; orbit_frame() is shared with the tray)
 """
 
+import html
+
 from PySide6.QtCore import (Property, QEasingCurve, QElapsedTimer, QPointF, QPropertyAnimation,
                             QRectF, Qt, QTimer, Signal)
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
-from devadara_gui import theme
+from devadara_gui import protection_modules, theme
 
 
 class Card(QFrame):
@@ -367,18 +369,18 @@ class HeroStatusCard(QFrame):
         layout.addLayout(text_col)
         layout.addStretch(1)
 
-    def set_state(self, state, last_scan_text):
-        """state: "starting" | "active" | "off" - the real auto-scan watcher
-        state from AutoScanController.realtime_state_changed (see
-        DashboardPage.set_realtime_state), same source as the sidebar's
-        REAL-TIME label - never hardcoded. last_scan_text: display string,
-        e.g. "Never" when no backend source has a real timestamp yet."""
-        if state == "active":
-            accent, status_word, status_text, glow = theme.NEON, "ACTIVE", "SYSTEM SECURED", True
-        elif state == "off":
-            accent, status_word, status_text, glow = theme.DANGER, "OFF", "PROTECTION OFF", True
-        else:
-            accent, status_word, status_text, glow = theme.TEXT_DIM, "STARTING", "STARTING PROTECTION…", False
+    def set_state(self, level, last_scan_text):
+        """level: a protection_modules level (SECURED / PARTIAL /
+        NOT_PROTECTED, or STARTING before the watchers run) - from
+        AutoScanController.protection_level_changed, the same signal and
+        the same LEVEL_VIEW label/colour as the sidebar's status box.
+        last_scan_text: scan_history.last_scan_text() - "No scan yet" when
+        nothing was ever scanned, so SECURED never reads as "scanned"."""
+        label, token = protection_modules.LEVEL_VIEW.get(
+            level, protection_modules.LEVEL_VIEW[protection_modules.STARTING])
+        accent = getattr(theme, token)
+        glow = level != protection_modules.STARTING
+        status_text = "STARTING PROTECTION…" if level == protection_modules.STARTING else label
 
         # Scoped to #heroCard so it can't cascade into the child QLabels;
         # only the border colour changes, the QSS gradient background stays.
@@ -389,10 +391,9 @@ class HeroStatusCard(QFrame):
         self._status.setStyleSheet(f"color: {accent};")
         self._status.setGraphicsEffect(theme.glow_effect(accent, blur=18) if glow else None)
 
-        self._desc.setText(
-            f'Real-time protection <span style="color:{accent};">[{status_word}]</span>'
-            f" · Last scan: {last_scan_text}"
-        )
+        # The label above already says how protected; this line only says
+        # when the last scan was (or that there was none) - no numbers.
+        self._desc.setText(html.escape(last_scan_text))
 
 
 class ElidedLabel(QLabel):

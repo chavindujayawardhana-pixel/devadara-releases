@@ -5,9 +5,10 @@ Phase 2: the Dashboard page's real content - hero status card, stats row,
 and Quick Actions - wired to whatever real backend data actually exists.
 
 Data-source investigation (see the Phase 2 plan for the full table):
-real-time protection state (AutoScanController.realtime_state_changed,
-connected to set_realtime_state by MainWindow - the same signal the
-sidebar's REAL-TIME label uses, so the two always agree) and
+the protection status (AutoScanController.protection_level_changed,
+connected to set_protection_level by MainWindow - the same signal and the
+same protection_modules.LEVEL_VIEW label/colour as the sidebar's status
+box, so the two always agree), the last scan (scan_history.py) and
 threat/suspicious counts (devadara.scan_log.read_findings()) are real. Nothing in the backend currently persists a "files scanned"
 running total or a "last scan" timestamp for any of the interactive scan
 tools (scan_cli.py, full_drive_scan_cli.py, downloads_scan_cli.py,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from devadara import scan_log, self_integrity
 
-from devadara_gui import theme
+from devadara_gui import protection_modules, scan_history, theme
 from devadara_gui.components import ActionCard, Button, Card, ElidedLabel, HeroStatusCard, PageHeader, StatCard
 
 # Tiers scan_log.read_findings() entries can carry that count as an actual
@@ -109,12 +110,15 @@ class DashboardPage(QWidget):
     # (integrity_check.IntegrityChecker) and feeds the result back.
     integrity_check_requested = Signal()
 
-    def __init__(self, navigate, parent=None):
+    def __init__(self, navigate, config_store=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
         the sidebar's active nav item to the given page index (see
-        MainWindow.navigate_to)."""
+        MainWindow.navigate_to). config_store: AutoScanController's, read
+        for the last scan (scan_history.py)."""
         super().__init__(parent)
         self._navigate = navigate
+        self._config_store = config_store
+        self._level = protection_modules.STARTING
 
         # Same as the Protection page: with the App integrity strip, the
         # cards don't fit the window's minimum height (560) - without
@@ -130,13 +134,12 @@ class DashboardPage(QWidget):
         self._header = PageHeader("Dashboard", "")
         layout.addWidget(self._header)
 
-        self._last_scan_text = stats["last_full_scan"]
         self._hero = HeroStatusCard()
         layout.addWidget(self._hero)
 
-        # STARTING until the controller's first realtime_state_changed
+        # STARTING until the controller's first protection_level_changed
         # (emitted once the model has loaded and watchers have started).
-        self._apply_realtime_state("starting")
+        self._apply_protection_level()
 
         layout.addLayout(self._build_stats_row(stats))
         layout.addWidget(self._build_quick_actions())
@@ -163,6 +166,7 @@ class DashboardPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.refresh_stats()
+        self.refresh_last_scan()
 
     def refresh_stats(self):
         """Re-read data/scan_log.jsonl - auto-scans append to it while the
@@ -173,14 +177,21 @@ class DashboardPage(QWidget):
             stats["suspicious"], variant="warn" if stats["suspicious"] else "default",
         )
 
-    def set_realtime_state(self, active):
-        """Connected to AutoScanController.realtime_state_changed."""
-        self._apply_realtime_state("active" if active else "off")
+    def set_protection_level(self, level):
+        """Connected to AutoScanController.protection_level_changed."""
+        self._level = level
+        self._apply_protection_level()
 
-    def _apply_realtime_state(self, state):
-        status = {"starting": "starting", "active": "secured", "off": "unprotected"}[state]
+    def refresh_last_scan(self):
+        """A scan finished (or the page is shown): re-read scan_history."""
+        self._apply_protection_level()
+
+    def _apply_protection_level(self):
+        label, _token = protection_modules.LEVEL_VIEW.get(
+            self._level, protection_modules.LEVEL_VIEW[protection_modules.STARTING])
+        status = "starting" if self._level == protection_modules.STARTING else label.lower()
         self._header.sub_label.setText(f"// system_status: {status} — welcome back, operator")
-        self._hero.set_state(state, self._last_scan_text)
+        self._hero.set_state(self._level, scan_history.last_scan_text(self._config_store))
 
     def _build_stats_row(self, stats):
         row = QHBoxLayout()

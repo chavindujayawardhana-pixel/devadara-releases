@@ -7,10 +7,11 @@ the Behavior Monitoring toggle (Phase 4) and the Windows Startup toggle
 unrelated design (see dump_services.txt/dump_pages.txt from before the GUI
 rewrite) and is out of scope - this page only covers what's wired up.
 
-The Auto-Scan and Behavior Monitoring toggles read their initial state
-from AutoScanController.config_store and, on change, persist it there and
-start/stop the matching watcher on the controller - never a fake/demo
-flag. The Windows Startup toggle has no config flag of its own: the HKCU
+The module toggles (one card per protection_modules.PROTECTION_MODULES
+entry - Downloads/USB Auto-Scan, Behavior Monitoring, and any module added
+there later) read their initial state from AutoScanController.config_store
+and, on change, persist it there and start/stop the matching watcher on
+the controller - never a fake/demo flag. The Windows Startup toggle has no config flag of its own: the HKCU
 Run-key entry itself (devadara.startup_registration) is the source of
 truth, so it always matches what Task Manager's Startup Apps tab shows.
 """
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import QFrame, QScrollArea, QVBoxLayout, QWidget
 
 from devadara import startup_registration
 from devadara_gui.components import ModuleToggleCard, PageHeader
+from devadara_gui.protection_modules import PROTECTION_MODULES
 
 
 class ProtectionPage(QWidget):
@@ -27,7 +29,7 @@ class ProtectionPage(QWidget):
         super().__init__(parent)
         self._controller = controller
 
-        # Four cards don't fit the window's minimum height (560) at their own
+        # The cards don't fit the window's minimum height (560) at their own
         # minimum height - without scrolling, Qt squeezes them until title
         # and description overlap. At normal sizes nothing scrolls.
         content = QWidget()
@@ -37,30 +39,16 @@ class ProtectionPage(QWidget):
 
         layout.addWidget(PageHeader("Protection", "// security modules — status and control"))
 
-        self._downloads_card = ModuleToggleCard(
-            "Downloads Auto-Scan",
-            "Automatically scans every new file that finishes arriving in your Downloads folder.",
-            initial_checked=controller.config_store.get("downloads_autoscan_enabled", True),
-        )
-        self._downloads_card.toggled.connect(self._on_downloads_toggled)
-        layout.addWidget(self._downloads_card)
-
-        self._usb_card = ModuleToggleCard(
-            "USB Auto-Scan",
-            "Automatically scans a removable drive the moment it's connected.",
-            initial_checked=controller.config_store.get("usb_autoscan_enabled", True),
-        )
-        self._usb_card.toggled.connect(self._on_usb_toggled)
-        layout.addWidget(self._usb_card)
-
-        self._behavior_card = ModuleToggleCard(
-            "Behavior Monitoring",
-            "Warns when many files in Downloads change very fast — a possible sign of "
-            "ransomware. Never acts on its own.",
-            initial_checked=controller.config_store.get("behavior_monitor_enabled", True),
-        )
-        self._behavior_card.toggled.connect(self._on_behavior_toggled)
-        layout.addWidget(self._behavior_card)
+        # One card per protection module, in registry order.
+        self.module_cards = {}
+        for module in PROTECTION_MODULES:
+            card = ModuleToggleCard(
+                module.title, module.description,
+                initial_checked=controller.config_store.get(module.config_key, module.default_on),
+            )
+            card.toggled.connect(lambda checked, m=module: self._on_module_toggled(m, checked))
+            layout.addWidget(card)
+            self.module_cards[module.key] = card
 
         # This page is built inside MainWindow(), before gui_app.py runs
         # startup_sync for the very first time - so on a first-ever launch
@@ -102,26 +90,12 @@ class ProtectionPage(QWidget):
         if self._controller.config_store.get("startup_setup_done", False):
             self._startup_card.set_checked_silently(startup_registration.is_in_startup())
 
-    def _on_downloads_toggled(self, checked):
-        self._controller.config_store.set("downloads_autoscan_enabled", checked)
+    def _on_module_toggled(self, module, checked):
+        self._controller.config_store.set(module.config_key, checked)
         if checked:
-            self._controller.start_downloads_watch()
+            module.start(self._controller)
         else:
-            self._controller.stop_downloads_watch()
-
-    def _on_usb_toggled(self, checked):
-        self._controller.config_store.set("usb_autoscan_enabled", checked)
-        if checked:
-            self._controller.start_usb_watch()
-        else:
-            self._controller.stop_usb_watch()
-
-    def _on_behavior_toggled(self, checked):
-        self._controller.config_store.set("behavior_monitor_enabled", checked)
-        if checked:
-            self._controller.start_behavior_watch()
-        else:
-            self._controller.stop_behavior_watch()
+            module.stop(self._controller)
 
     def _on_startup_toggled(self, checked):
         if checked:

@@ -81,10 +81,16 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
   the request; manual scans are not logged) and raise a tray message while
   the window is hidden.
 - **Watchers** — `auto_scan_controller.AutoScanController` wraps
-  `downloads_monitor`, `usb_monitor` and `behavior_monitor`; each is a
-  Protection-page toggle saved in `data/gui_state.json` (`config_store.py`)
-  and counts toward the sidebar's REAL-TIME status. Watcher callbacks fire
-  on background threads and only emit Qt signals.
+  `downloads_monitor`, `usb_monitor` and `behavior_monitor`. The ONE list
+  of protection modules is `protection_modules.PROTECTION_MODULES` (not
+  Windows Startup): the Protection page builds a toggle card per entry
+  (saved in `data/gui_state.json`, `config_store.py`), and the controller
+  counts the running ones into one level emitted as
+  `protection_level_changed` — SECURED (all, `NEON`) / PARTIALLY
+  PROTECTED (some, `WARN`) / NOT PROTECTED (none, `DANGER`), shown by
+  both the Dashboard hero and the sidebar box from the same `LEVEL_VIEW`.
+  Never show counts or percentages; never hardcode the module count.
+  Watcher callbacks fire on background threads and only emit Qt signals.
 - **Behavior alerts** — `behavior_alert_popup.py` shows "possible
   ransomware-like activity" with the suspected programs (best-effort; often
   empty on a busy PC). Suspend/Resume/Kill each need a confirmation dialog

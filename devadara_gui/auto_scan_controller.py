@@ -32,6 +32,7 @@ from devadara.downloads_monitor import start_monitoring_downloads
 from devadara.ml_scanner import load_model_and_features
 from devadara.usb_monitor import start_usb_monitoring
 
+from devadara_gui import protection_modules
 from devadara_gui.config_store import ConfigStore
 from devadara_gui.process_guard import describe_suspect
 
@@ -45,10 +46,12 @@ class AutoScanController(QObject):
     # changes in Downloads), each suspect enriched by describe_suspect().
     # Alert only - nothing here ever acts on a process.
     behavior_alert = Signal(dict)
-    # True while at least one watcher is actually running. First emitted
-    # at the end of load_model() (the sidebar shows "STARTING..." until
-    # then, never "ACTIVE"), then on every watcher start/stop.
-    realtime_state_changed = Signal(bool)
+    # The protection level (protection_modules.SECURED / PARTIAL /
+    # NOT_PROTECTED) over every module in protection_modules.
+    # PROTECTION_MODULES, by what's actually running. First emitted at the
+    # end of load_model() (the sidebar/Dashboard show STARTING until then,
+    # never SECURED), then on every watcher start/stop.
+    protection_level_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -67,22 +70,30 @@ class AutoScanController(QObject):
             return
         self.model, self.feature_columns = load_model_and_features()
         self._apply_startup_config()
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def _apply_startup_config(self):
-        if self.config_store.get("downloads_autoscan_enabled", True):
-            self.start_downloads_watch()
-        if self.config_store.get("usb_autoscan_enabled", True):
-            self.start_usb_watch()
-        if self.config_store.get("behavior_monitor_enabled", True):
-            self.start_behavior_watch()
+        for module in protection_modules.PROTECTION_MODULES:
+            if self.config_store.get(module.config_key, module.default_on):
+                module.start(self)
 
-    def is_realtime_active(self):
-        return (self._downloads_observer is not None or self._usb_monitor is not None
-                or self._behavior_observer is not None)
+    def is_downloads_watch_running(self):
+        return self._downloads_observer is not None
 
-    def _emit_realtime_state(self):
-        self.realtime_state_changed.emit(self.is_realtime_active())
+    def is_usb_watch_running(self):
+        return self._usb_monitor is not None
+
+    def is_behavior_watch_running(self):
+        return self._behavior_observer is not None
+
+    def protection_level(self):
+        """Counted over protection_modules.PROTECTION_MODULES - never a
+        hardcoded module count."""
+        return protection_modules.protection_level(
+            module.is_running(self) for module in protection_modules.PROTECTION_MODULES)
+
+    def _emit_protection_level(self):
+        self.protection_level_changed.emit(self.protection_level())
 
     def start_downloads_watch(self):
         if self._downloads_observer is not None:
@@ -91,7 +102,7 @@ class AutoScanController(QObject):
             print(f"[WARNING] Downloads folder not found, skipping auto-scan watch: {DOWNLOADS_FOLDER}")
             return
         self._downloads_observer = start_monitoring_downloads(DOWNLOADS_FOLDER, self._handle_new_download)
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def stop_downloads_watch(self):
         if self._downloads_observer is None:
@@ -99,13 +110,13 @@ class AutoScanController(QObject):
         observer, self._downloads_observer = self._downloads_observer, None
         observer.stop()
         observer.join()
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def start_usb_watch(self):
         if self._usb_monitor is not None:
             return
         self._usb_monitor = start_usb_monitoring(self._handle_drive_connected)
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def stop_usb_watch(self):
         if self._usb_monitor is None:
@@ -113,7 +124,7 @@ class AutoScanController(QObject):
         monitor, self._usb_monitor = self._usb_monitor, None
         monitor.stop()
         monitor.join()
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def start_behavior_watch(self):
         if self._behavior_observer is not None:
@@ -122,7 +133,7 @@ class AutoScanController(QObject):
             print(f"[WARNING] Downloads folder not found, skipping behavior monitoring: {DOWNLOADS_FOLDER}")
             return
         self._behavior_observer = start_behavior_monitoring(DOWNLOADS_FOLDER, self._handle_behavior_alert)
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def stop_behavior_watch(self):
         if self._behavior_observer is None:
@@ -130,12 +141,11 @@ class AutoScanController(QObject):
         observer, self._behavior_observer = self._behavior_observer, None
         observer.stop()
         observer.join()
-        self._emit_realtime_state()
+        self._emit_protection_level()
 
     def stop_all_watches(self):
-        self.stop_downloads_watch()
-        self.stop_usb_watch()
-        self.stop_behavior_watch()
+        for module in protection_modules.PROTECTION_MODULES:
+            module.stop(self)
 
     # ─── watcher callbacks - fire on a background thread, do minimal work ───
 
