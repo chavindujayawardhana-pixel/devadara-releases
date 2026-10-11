@@ -11,7 +11,7 @@ target design this replicates.
 import os
 
 from PySide6.QtCore import QElapsedTimer, QEvent, QObject, Qt, QTimer
-from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap, QRadialGradient
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -124,10 +124,17 @@ class Sidebar(QFrame):
         wordmark.setGraphicsEffect(theme.glow_effect(theme.NEON, blur=14))
         text_col.addWidget(wordmark)
 
-        tagline = QLabel("// ANTIVIRUS v1.0")
-        tagline.setFont(theme.letter_spaced_font(size=theme.SIDEBAR_TAGLINE_PT, spacing=2))
-        tagline.setStyleSheet(f"color: {theme.TEXT_DIM};")
-        text_col.addWidget(tagline)
+        # One line under the wordmark, left-aligned with it. Fixed height
+        # (one line) and never wrapped: the logo row stays the logo's height,
+        # so nothing below it moves; SIDEBAR_WIDTH is sized so it never clips.
+        font = theme.letter_spaced_font(spacing=theme.SIDEBAR_TAGLINE_SPACING)
+        font.setPixelSize(theme.SIDEBAR_TAGLINE_PX)
+        self.tagline = QLabel("Natural Defense. Digital World.")
+        self.tagline.setFont(font)
+        self.tagline.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        self.tagline.setWordWrap(False)
+        self.tagline.setFixedHeight(QFontMetrics(font).lineSpacing())
+        text_col.addWidget(self.tagline)
 
         row.addLayout(text_col)
         row.addStretch(1)
@@ -389,9 +396,12 @@ class TrayOrbitAnimator(QObject):
 
 
 class MainWindow(QMainWindow):
-    MAX_WIDTH = 1120
+    # Widths include the sidebar (theme.SIDEBAR_WIDTH, 300): the content
+    # area is 880px at the default/largest size and 660px at the smallest -
+    # widened by the same 60px as the sidebar so every page keeps its room.
+    MAX_WIDTH = 1180
     MAX_HEIGHT = 655
-    MIN_WIDTH = 900
+    MIN_WIDTH = 960
     MIN_HEIGHT = 560
 
     def __init__(self):

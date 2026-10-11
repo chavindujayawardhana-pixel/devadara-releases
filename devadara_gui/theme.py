@@ -33,10 +33,15 @@ ICON_ORBIT_PATH = app_file("assets", "app_icon_orbit.png")
 # Sidebar header - deliberately larger than the mockup (user decision).
 # SIDEBAR_LOGO_SIZE is the one knob for the logo: ScanOrbitLogo sizes
 # itself and scales its glow from it.
-SIDEBAR_WIDTH = 240
+# SIDEBAR_WIDTH is the smallest clean width where the one-line tagline
+# ("Natural Defense. Digital World.", 186px in Consolas at 9px/1px
+# spacing) fits beside the logo with the 20px right padding: 20 + 56 + 12
+# + 186 + 20 = 294 -> 300.
+SIDEBAR_WIDTH = 300
 SIDEBAR_LOGO_SIZE = 56
 SIDEBAR_NAME_PT = 15
-SIDEBAR_TAGLINE_PT = 7
+SIDEBAR_TAGLINE_PX = 9
+SIDEBAR_TAGLINE_SPACING = 1
 
 # ─── Color tokens (exact hex from the mockup's :root) ───
 BG = "#0a0a0f"
