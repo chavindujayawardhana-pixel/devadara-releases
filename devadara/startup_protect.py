@@ -48,6 +48,7 @@ what happened.
 import os
 import time
 
+from devadara import self_integrity
 from devadara.behavior_monitor import start_monitoring
 from devadara.downloads_monitor import start_monitoring_downloads
 from devadara.memory import get_combined_known_bad_hashes
@@ -71,6 +72,10 @@ def _log_if_notable(result, source, notify_immediately=False):
     download) - sweep_folder always passes False and summarizes instead,
     see module docstring for why.
     """
+    # DEVADARA's own genuine files are never logged or notified (their
+    # tier is untouched); a changed or unlisted file is logged as usual.
+    if self_integrity.is_verified_self_file(result.get("file_path"), result.get("hash")):
+        return None
     if record_scan_result(result, source) is None:
         return None
 

@@ -39,6 +39,7 @@ from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
 
+from devadara import self_integrity
 from devadara.app_paths import state_file
 
 QUARANTINE_DIR = state_file("quarantine")
@@ -104,6 +105,13 @@ def quarantine_file(file_path, file_hash=None, threat_name=None, tier=None, sour
     or interrupted quarantine leaves the original untouched rather than
     risking the only copy of the file.
     """
+    # Never DEVADARA's own genuine files (re-hashed now, not trusting the
+    # scan's hash). A changed or unlisted file in DEVADARA's folder is not
+    # protected by this - it can be quarantined like any other.
+    if self_integrity.is_verified_self_file(file_path):
+        _safe_print(f"[QUARANTINE REFUSED] '{file_path}': {self_integrity.SELF_REFUSAL}.")
+        return None
+
     try:
         with open(file_path, "rb") as f:
             original_bytes = f.read()
@@ -261,6 +269,10 @@ def confirm_and_quarantine(file_path, file_hash=None, threat_name=None, tier=Non
 
     Returns True if the file was quarantined.
     """
+    if self_integrity.is_verified_self_file(file_path):
+        print(f"  Not quarantined - {self_integrity.SELF_REFUSAL}.")
+        return False
+
     answer = input("Quarantine this file now (encrypt + move out of place)? [y/N]: ").strip().lower()
     if answer != "y":
         print("  Left in place - not quarantined.")

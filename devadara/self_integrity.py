@@ -329,6 +329,8 @@ def check_install(root=None, public_key=None):
 
 # ─── per-file: is this a genuine DEVADARA file? ───
 
+SELF_REFUSAL = "it's a verified DEVADARA program file (matches the signed manifest)"
+
 # The verified manifest, re-read only when the manifest/signature files
 # change on disk - is_verified_self_file() may be asked about many files.
 _cache = {"key": None, "entries": None}
@@ -377,3 +379,18 @@ def is_verified_self_file(file_path, sha256=None, root=None, public_key=None):
         return sha256 is not None and sha256.lower() == entry[1]
     except Exception:
         return False
+
+
+def split_verified_self(results):
+    """(others, verified_self) from scan_engine results. A result whose file
+    is a genuine DEVADARA file goes to verified_self instead of being
+    flagged/logged/alerted - its tier is left exactly as the scan set it.
+    Uses the hash the scan just computed. A changed or unlisted file stays
+    in others, like any other file."""
+    others, verified = [], []
+    for result in results:
+        if is_verified_self_file(result.get("file_path"), result.get("hash")):
+            verified.append(result)
+        else:
+            others.append(result)
+    return others, verified

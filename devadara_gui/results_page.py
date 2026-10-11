@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from devadara import ignore_list, quarantine, scan_log, verdict_labels
+from devadara import ignore_list, quarantine, scan_log, self_integrity, verdict_labels
 from devadara.hash_scanner import compute_sha256
 from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
@@ -751,6 +751,8 @@ class ResultsPage(QWidget):
             return "the file no longer exists"
         if _norm(path).startswith(SYSTEM_ROOT + os.sep):
             return "it's a Windows component - quarantining it could break Windows"
+        if self_integrity.is_verified_self_file(path):
+            return self_integrity.SELF_REFUSAL
         return None
 
     def _resolve_virus_item(self, item):

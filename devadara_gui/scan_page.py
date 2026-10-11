@@ -46,6 +46,7 @@ from devadara_gui.components import (
     Button, Card, ElidedLabel, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow,
 )
 from devadara_gui.mini_form_popup import MiniFormPopup
+from devadara_gui.results_page import reason_text
 from devadara_gui.scan_worker import ScanWorker, format_elapsed, gather_persistence_entries
 
 FIXED_PREFIX = "fixed:"
@@ -611,6 +612,7 @@ class ScanPage(QWidget):
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
         self._record_findings(self._current_request, self._current_findings)
         self._current_findings = []
+        known_good_self = (self._current_results or {}).get("known_good_self", [])
         if (self._current_request is not None and not self._current_request.is_auto
                 and self._current_results is not None):
             self.manual_scan_results.emit(self._current_results)
@@ -622,7 +624,7 @@ class ScanPage(QWidget):
             if stopped:
                 self._inner_stack.setCurrentIndex(0)
             else:
-                self._progress_view.show_finished(checked, threats, hidden, elapsed)
+                self._progress_view.show_finished(checked, threats, hidden, elapsed, known_good_self)
             # Mirrors the same finish onto the popup too, in case the user
             # had minimized this manual scan - unchanged behavior from
             # before request queueing existed.
@@ -788,7 +790,10 @@ class ScanCompleteCard(QWidget):
         else:
             self.close_clicked.emit()
 
-    def show_result(self, threats, files_checked, elapsed_seconds):
+    def show_result(self, threats, files_checked, elapsed_seconds, known_good_self=()):
+        """known_good_self: scan results of DEVADARA's own genuine files a
+        layer flagged (ScanWorker.results) - not counted as threats, but
+        named in the subtitle so they never silently disappear."""
         self._threats = threats
         if threats > 0:
             accent = theme.DANGER
@@ -812,6 +817,20 @@ class ScanCompleteCard(QWidget):
 
         self._title.setStyleSheet(f"color: {accent};")
         self._title.setGraphicsEffect(theme.glow_effect(accent, blur=16))
+
+        # What the scan said about DEVADARA's own files stays visible here.
+        if known_good_self:
+            n = len(known_good_self)
+            self._subtitle.setText(self._subtitle.text() + f"\n{n} DEVADARA file{'' if n == 1 else 's'} "
+                                   "verified (Known Good) · hover for details")
+            lines = []
+            for result in known_good_self:
+                reason = reason_text(result)
+                lines.append(f"{result['file_path']} — scan said: {result.get('tier')}"
+                             + (f" ({reason})" if reason else ""))
+            self._subtitle.setToolTip("\n".join(lines))
+        else:
+            self._subtitle.setToolTip("")
 
 
 def confirm_stop_dialog(parent):
@@ -1072,7 +1091,7 @@ class ScanProgressView(QWidget):
                 self._log_panel.takeItem(0)
             self._log_panel.scrollToBottom()
 
-    def show_finished(self, checked, threats, hidden, elapsed):
+    def show_finished(self, checked, threats, hidden, elapsed, known_good_self=()):
         self._checked_timer.stop()
         self._path_cycle_timer.stop()
         self._target_checked = checked
@@ -1082,5 +1101,5 @@ class ScanProgressView(QWidget):
         self.update_stats(checked, threats, hidden)
 
         self._progress_section.hide()
-        self._complete_card.show_result(threats, checked, elapsed)
+        self._complete_card.show_result(threats, checked, elapsed, known_good_self)
         self._complete_card.show()

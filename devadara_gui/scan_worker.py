@@ -67,7 +67,7 @@ import time
 
 from PySide6.QtCore import QObject, Signal
 
-from devadara import drive_scanner, persistence_scanner, process_scanner, scan_engine
+from devadara import drive_scanner, persistence_scanner, process_scanner, scan_engine, self_integrity
 from devadara.memory import get_combined_known_bad_hashes
 from devadara.signature_scanner import check_digital_signatures_batch, load_trusted_publishers
 from devadara_gui.process_guard import describe_suspect
@@ -139,7 +139,10 @@ class ScanWorker(QObject):
     #    "startup": [persistence entries whose target was flagged, each with
     #                its "scan" result], "processes": [suspicious processes,
     #                each with exe/create_time snapshotted for process_guard,
-    #                its "reasons" and the "scan" of its .exe]}
+    #                its "reasons" and the "scan" of its .exe],
+    #    "known_good_self": [scan results of DEVADARA's own genuine files
+    #                a layer flagged - NOT in "flagged"/"startup", never
+    #                logged or alerted; their tier is left as scanned]}
     results = Signal(dict)
     finished = Signal(bool, int, int, int, float)  # stopped_early, checked, threats, hidden, elapsed_seconds
 
@@ -176,6 +179,9 @@ class ScanWorker(QObject):
         known_bad_hashes = get_combined_known_bad_hashes()
         trusted_publishers = load_trusted_publishers()
         self._flagged = []
+        # DEVADARA's own genuine files that a layer flagged - routed here
+        # instead of _flagged (see self_integrity.split_verified_self).
+        self._known_good_self = []
 
         suspicious_processes = []
         if self._system_area_flags.get("memory_processes"):
@@ -215,8 +221,11 @@ class ScanWorker(QObject):
                 on_progress=on_progress, should_stop=self._should_stop, progress_every_n_files=5,
             )
             checked += outcome["files_scanned"]
-            self._flagged.extend(outcome["known_bad_findings"] + outcome["to_review"])
-            threats += len(outcome["known_bad_findings"]) + len(outcome["to_review"])
+            found, verified_self = self_integrity.split_verified_self(
+                outcome["known_bad_findings"] + outcome["to_review"])
+            self._flagged.extend(found)
+            self._known_good_self.extend(verified_self)
+            threats += len(found)
             hidden += len(outcome["hidden_files"])
             hidden_files.extend(outcome["hidden_files"])
             if outcome["interrupted"]:
@@ -244,14 +253,22 @@ class ScanWorker(QObject):
         unique = {}
         for result in self._flagged:
             unique.setdefault(result["file_path"], result)
+        known_good_self = {}
+        for result in self._known_good_self:
+            known_good_self.setdefault(result["file_path"], result)
         self.findings.emit(list(unique.values()))
         self.results.emit({
             "flagged": list(unique.values()),
             "hidden": hidden_files,
             "startup": [e for e in persistence_entries
-                        if e.get("scan") and e["scan"]["tier"] in THREAT_TIERS],
+                        if e.get("scan") and e["scan"]["tier"] in THREAT_TIERS
+                        and e["scan"]["file_path"] not in known_good_self],
             "processes": [p for p in suspicious_processes if "scan" in p],
+            "known_good_self": list(known_good_self.values()),
         })
+        # The live count during the drive walk can't tell DEVADARA's own
+        # files apart yet - this final one can.
+        self.stats.emit(checked, threats, hidden)
         self.finished.emit(stopped, checked, threats, hidden, elapsed)
 
     def _evaluate_entries(self, entries, get_path, get_label, known_bad_hashes, model,
@@ -308,8 +325,11 @@ class ScanWorker(QObject):
                     entry["scan"] = result
                     checked += 1
                     if result["tier"] in THREAT_TIERS:
-                        threats += 1
-                        self._flagged.append(result)
+                        if self_integrity.is_verified_self_file(path, result["hash"]):
+                            self._known_good_self.append(result)
+                        else:
+                            threats += 1
+                            self._flagged.append(result)
                 else:
                     entry["scan"] = None
 
