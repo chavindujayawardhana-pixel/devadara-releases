@@ -39,9 +39,10 @@ from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-QUARANTINE_DIR = os.path.join(PROJECT_ROOT, "data", "quarantine")
-INDEX_PATH = os.path.join(PROJECT_ROOT, "data", "quarantine_index.json")
+from devadara.app_paths import state_file
+
+QUARANTINE_DIR = state_file("quarantine")
+INDEX_PATH = state_file("quarantine_index.json")
 
 
 def _safe_print(text):

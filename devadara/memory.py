@@ -22,10 +22,10 @@ import sys
 from datetime import datetime
 
 from devadara.hash_scanner import load_known_bad_hashes
+from devadara.app_paths import app_file, state_file
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-KNOWN_BAD_HASHES_PATH = os.path.join(PROJECT_ROOT, "data", "known_bad_hashes.json")
-MEMORY_PATH = os.path.join(PROJECT_ROOT, "data", "memory_hashes.json")
+KNOWN_BAD_HASHES_PATH = app_file("data", "known_bad_hashes.json")
+MEMORY_PATH = state_file("memory_hashes.json")
 
 
 def _safe_print(text):

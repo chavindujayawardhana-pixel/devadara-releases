@@ -18,8 +18,9 @@ import json
 import os
 from datetime import datetime
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IGNORE_PATH = os.path.join(PROJECT_ROOT, "data", "ignored_files.json")
+from devadara.app_paths import state_file
+
+IGNORE_PATH = state_file("ignored_files.json")
 
 # Re-read only when the file on disk changes - evaluate_file() asks for
 # every file of a scan, so one small stat per call instead of a JSON parse.

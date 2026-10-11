@@ -18,16 +18,17 @@ import tempfile
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QGraphicsDropShadowEffect
 
+from devadara.app_paths import app_file
+
 # Lives here (not main_window.py, the only other place that needs it) so
 # devadara_gui/mini_form_popup.py can also import it without creating a
 # main_window -> scan_page -> mini_form_popup -> main_window import cycle.
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ICON_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon.png")
+ICON_PATH = app_file("assets", "app_icon.png")
 # Orbit-animation layers, split once from app_icon.png: the logo with its
 # orbit ring removed, and the ring alone as additive light on black - see
 # components.ScanOrbitLogo.
-ICON_BASE_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon_base.png")
-ICON_ORBIT_PATH = os.path.join(PROJECT_ROOT, "assets", "app_icon_orbit.png")
+ICON_BASE_PATH = app_file("assets", "app_icon_base.png")
+ICON_ORBIT_PATH = app_file("assets", "app_icon_orbit.png")
 
 # Sidebar header - deliberately larger than the mockup (user decision).
 # SIDEBAR_LOGO_SIZE is the one knob for the logo: ScanOrbitLogo sizes

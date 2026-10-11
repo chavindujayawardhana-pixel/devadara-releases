@@ -6,8 +6,9 @@ Manages scan exceptions (files and folders that should not be scanned).
 import json
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_EXCEPTIONS_FILE = os.path.join(PROJECT_ROOT, "data", "scan_exceptions.json")
+from devadara.app_paths import state_file
+
+_EXCEPTIONS_FILE = state_file("scan_exceptions.json")
 _cached_exceptions = None
 
 def _ensure_data_dir():

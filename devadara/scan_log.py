@@ -19,12 +19,13 @@ import os
 import uuid
 from datetime import datetime
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_PATH = os.path.join(PROJECT_ROOT, "data", "scan_log.jsonl")
+from devadara.app_paths import state_file
+
+LOG_PATH = state_file("scan_log.jsonl")
 # Suspend/resume/kill actions a human confirmed on a behavior alert (GUI) -
 # kept OUT of scan_log.jsonl, which review-log walks as findings to confirm
 # or quarantine; an action record is history, not a finding.
-PROCESS_ACTIONS_PATH = os.path.join(PROJECT_ROOT, "data", "process_actions.jsonl")
+PROCESS_ACTIONS_PATH = state_file("process_actions.jsonl")
 
 
 def append_finding(source, tier, file_path=None, file_hash=None, **extra):

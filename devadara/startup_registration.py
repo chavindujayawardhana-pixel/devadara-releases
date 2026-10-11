@@ -32,8 +32,9 @@ import sys
 
 import winreg
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LAUNCHER_SCRIPT = os.path.join(PROJECT_ROOT, "gui_app.py")
+from devadara.app_paths import app_file
+
+LAUNCHER_SCRIPT = app_file("gui_app.py")  # source runs only; a frozen build launches its exe
 
 RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 APPROVED_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"

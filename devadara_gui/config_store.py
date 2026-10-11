@@ -19,8 +19,9 @@ devadara/quarantine.py, ...): write to a temp file, then os.replace().
 import json
 import os
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "data", "gui_state.json")
+from devadara.app_paths import state_file
+
+CONFIG_PATH = state_file("gui_state.json")
 
 DEFAULTS = {
     "downloads_autoscan_enabled": True,

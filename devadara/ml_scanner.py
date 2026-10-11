@@ -23,6 +23,8 @@ import os
 
 import pefile
 
+from devadara.app_paths import app_file
+
 # joblib and pandas are imported inside the functions that use them, not
 # here: together they cost ~2.8s to import, and this module is pulled in
 # at GUI startup (via auto_scan_controller/scan_engine) long before any
@@ -30,9 +32,8 @@ import pefile
 # cost off the path to the main window appearing. Python caches modules,
 # so every call after the first pays nothing extra.
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "malware_model.joblib")
-FEATURE_LIST_PATH = os.path.join(PROJECT_ROOT, "models", "feature_columns.json")
+MODEL_PATH = app_file("models", "malware_model.joblib")
+FEATURE_LIST_PATH = app_file("models", "feature_columns.json")
 
 
 def load_model_and_features():

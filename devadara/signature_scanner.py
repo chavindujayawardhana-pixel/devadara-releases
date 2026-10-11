@@ -44,9 +44,9 @@ import subprocess
 from datetime import datetime, timezone
 
 from devadara.hidden_process import hidden_window_kwargs
+from devadara.app_paths import app_file
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TRUSTED_PUBLISHERS_PATH = os.path.join(PROJECT_ROOT, "data", "trusted_publishers.json")
+TRUSTED_PUBLISHERS_PATH = app_file("data", "trusted_publishers.json")
 
 # Resolved via SystemRoot rather than left as a bare "powershell.exe" looked
 # up on PATH - a scanner shouldn't depend on PATH being intact/uncorrupted
@@ -71,7 +71,7 @@ if not os.path.exists(_POWERSHELL_EXE):
 # them otherwise). Each path is still its own separate process argument,
 # never woven into script text, preserving the same injection-safety
 # guarantee the old inline script made.
-_BATCH_SIGNATURE_SCRIPT_PATH = os.path.join(PROJECT_ROOT, "tools", "batch_signature_check.ps1")
+_BATCH_SIGNATURE_SCRIPT_PATH = app_file("tools", "batch_signature_check.ps1")
 
 _DOTNET_DATE_RE = re.compile(r"/Date\((-?\d+)\)/")
 _CN_RE = re.compile(r"CN=([^,]+)")

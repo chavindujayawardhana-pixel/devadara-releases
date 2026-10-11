@@ -43,10 +43,10 @@ import re
 import subprocess
 
 from devadara.hidden_process import hidden_window_kwargs
+from devadara.app_paths import app_file
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-YARA_EXE = os.path.join(PROJECT_ROOT, "tools", "yara64.exe")
-RULES_DIR = os.path.join(PROJECT_ROOT, "data", "yara_rules")
+YARA_EXE = app_file("tools", "yara64.exe")
+RULES_DIR = app_file("data", "yara_rules")
 
 _MATCH_LINE_RE = re.compile(r"^(\S+)\s+\[(.*?)\]\s+\[(.*?)\]\s+(.+)$")
 _META_PAIR_RE = re.compile(r'(\w+)="([^"]*)"')
