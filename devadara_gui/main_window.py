@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from devadara import scan_log
+from devadara.self_integrity import BAD_SIGNATURE, PROBLEMS
 from devadara_gui import dialogs, theme
 from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
@@ -37,6 +38,7 @@ from devadara_gui.components import (
     NavItem, PageHeader, ScanOrbitLogo, load_orbit_layers, orbit_frame, scaled_image,
 )
 from devadara_gui.dashboard_page import DashboardPage
+from devadara_gui.integrity_check import IntegrityChecker
 from devadara_gui.protection_page import ProtectionPage
 from devadara_gui.results_page import ResultsPage
 from devadara_gui.scan_page import ScanPage
@@ -49,6 +51,9 @@ ICON_PATH = theme.ICON_PATH
 
 TRAY_TOOLTIP = "DEVADARA — Antivirus Guard"
 TRAY_MESSAGE_MS = 10_000
+# The app-integrity self-check starts this long after start_background_init()
+# - after the window is painted, alongside the model load.
+INTEGRITY_CHECK_DELAY_MS = 3_000
 
 NAV_ITEMS = [
     ("▣", "Dashboard"),         # ▣
@@ -424,6 +429,14 @@ class MainWindow(QMainWindow):
 
         self._build_tray_icon()
 
+        # App integrity self-check (read-only): shortly after startup and on
+        # the Dashboard's "Check now" - see integrity_check.py.
+        self.integrity_checker = IntegrityChecker(self)
+        self.integrity_checker.started.connect(self.dashboard_page.set_integrity_checking)
+        self.integrity_checker.finished.connect(self.dashboard_page.set_integrity_result)
+        self.integrity_checker.finished.connect(self._on_integrity_result)
+        self.dashboard_page.integrity_check_requested.connect(self.integrity_checker.start)
+
         # Orbit animation while any scan runs (manual, Downloads, USB,
         # queued) - see ScanPage.scan_active_changed.
         self.scan_page.scan_active_changed.connect(self.sidebar.logo.set_scanning)
@@ -497,6 +510,23 @@ class MainWindow(QMainWindow):
         can never race an unloaded model, and the sidebar only says ACTIVE
         once they have."""
         QTimer.singleShot(150, self.auto_scan_controller.load_model)
+        QTimer.singleShot(INTEGRITY_CHECK_DELAY_MS, self.integrity_checker.start)
+
+    def _on_integrity_result(self, result):
+        """Tray message when the self-check finds a problem while the window
+        is hidden - the Dashboard shows it otherwise. Notifies only; the
+        check never changes or removes anything."""
+        if result.get("status") not in (PROBLEMS, BAD_SIGNATURE):
+            return
+        if self.tray_icon is None or (self.isVisible() and not self.isMinimized()):
+            return
+        self.tray_icon.showMessage(
+            "DEVADARA: app integrity problem",
+            "Some of DEVADARA's own program files don't match its signed manifest. "
+            "Open DEVADARA → Dashboard → App integrity for details.",
+            QSystemTrayIcon.MessageIcon.Warning,
+            TRAY_MESSAGE_MS,
+        )
 
     def schedule_auto_hide(self, delay_ms):
         """For a Windows-logon (--autostart) launch: hide to the tray after
