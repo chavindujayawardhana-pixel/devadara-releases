@@ -65,17 +65,22 @@ class IntegrityChecker(QObject):
         self._thread.started.connect(self._worker.run)
         self._worker.done.connect(self._on_done)
         self._worker.done.connect(self._thread.quit)
-        self._worker.done.connect(self._worker.deleteLater)
-        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._on_thread_finished)
         self._thread.start()
         self.started.emit()
         return True
 
     def _on_done(self, result):
-        self._thread = None
-        self._worker = None
+        # The worker thread may still be finishing here - the thread and
+        # worker are only released in _on_thread_finished, never earlier
+        # (dropping the worker while its thread still runs made Qt abort).
         self.last_result = result
         self.finished.emit(result)
+
+    def _on_thread_finished(self):
+        thread, self._thread, self._worker = self._thread, None, None
+        if thread is not None:
+            thread.deleteLater()
 
     def shutdown(self):
         """App quitting: let a running check finish (it only reads files)."""
