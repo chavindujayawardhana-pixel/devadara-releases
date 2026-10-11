@@ -152,6 +152,10 @@ class DashboardPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Page-level scrolling has no visible bars: the mouse wheel / touchpad
+        # still scroll it (the hidden scroll bar keeps working) when the
+        # window is too short. Bars inside data tables/lists are unaffected.
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(scroll)
