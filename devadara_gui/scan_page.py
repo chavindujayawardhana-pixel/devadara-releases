@@ -40,7 +40,7 @@ from devadara import scan_log
 from devadara.ml_scanner import load_model_and_features
 from devadara.usb_monitor import list_removable_drives
 
-from devadara_gui import theme
+from devadara_gui import scan_history, theme
 from devadara_gui.auto_scan_controller import DOWNLOADS_FOLDER
 from devadara_gui.components import (
     Button, Card, ElidedLabel, PageHeader, RadioItem, StatCard, StatusCircle, TreeRow,
@@ -62,10 +62,13 @@ MODES = ["Quick Scan", "Full Scan", "Scan Downloads", "Scan USB"]
 # ("downloads_watch"/"usb_watch"/"boot_sweep"), writes the request's
 # findings to data/scan_log.jsonl; manual scans leave it None and aren't
 # logged (the Dashboard's stat cards count unattended findings only).
+# scan_kind, when set, is what scan_history records once the scan FINISHES
+# (see _record_scan_history): the manual mode, "Custom scan", or "Startup
+# scan"; per-file Downloads/USB auto-scans leave it None.
 _ScanRequest = namedtuple("_ScanRequest", [
     "targets", "system_area_flags", "quick", "model", "feature_columns",
-    "persistence_entries", "is_auto", "auto_label", "log_source",
-], defaults=(None,))
+    "persistence_entries", "is_auto", "auto_label", "log_source", "scan_kind",
+], defaults=(None, None))
 
 # The sign-in startup sweep of Downloads (see ScanPage.start_boot_sweep).
 # Full mode, like startup_protect.py's original boot sweep: Quick would
@@ -121,6 +124,9 @@ class ScanPage(QWidget):
     # sweep) finished with at least one flagged file; MainWindow turns it
     # into a tray notification when the window is hidden.
     auto_scan_flagged = Signal(str, list)
+    # A finished scan was recorded in scan_history (last scan / last full
+    # scan) - MainWindow refreshes the Dashboard and sidebar.
+    scan_recorded = Signal()
     # ScanWorker.results of a finished MANUAL scan (stopped ones too) - the
     # Results page's in-memory "last scan" (see results_store.py).
     manual_scan_results = Signal(dict)
@@ -393,8 +399,18 @@ class ScanPage(QWidget):
         self._usb_warning_label.setVisible(no_usb)
         self._scan_button.setEnabled(not no_usb)
 
+    def _manual_scan_kind(self):
+        """The current mode's name if its default selection is unchanged,
+        otherwise "Custom scan" - so only an untouched Full Scan counts as
+        a full scan."""
+        checked = {key for key, row in self._rows.items() if row.isChecked()}
+        if checked == self._mode_checked_keys(self._current_mode):
+            return self._current_mode
+        return "Custom scan"
+
     def _on_scan_clicked(self):
         targets, system_area_flags, quick = self._resolve_scan_plan()
+        scan_kind = self._manual_scan_kind()
         already_running = self._thread is not None
 
         # Only touch the progress view/popup's "starting" state if nothing
@@ -464,7 +480,7 @@ class ScanPage(QWidget):
 
         request = _ScanRequest(
             targets, system_area_flags, quick, model, feature_columns, persistence_entries,
-            is_auto=False, auto_label=None,
+            is_auto=False, auto_label=None, scan_kind=scan_kind,
         )
         if already_running:
             self._pending_queue.append(request)
@@ -505,7 +521,7 @@ class ScanPage(QWidget):
             [DOWNLOADS_FOLDER], _NO_SYSTEM_AREA_FLAGS, BOOT_SWEEP_QUICK,
             self._controller.model, self._controller.feature_columns, [],
             is_auto=True, auto_label="Startup scan: Downloads",
-            log_source="boot_sweep",
+            log_source="boot_sweep", scan_kind="Startup scan",
         ))
 
     def _enqueue_or_start(self, request):
@@ -609,8 +625,17 @@ class ScanPage(QWidget):
         if request.is_auto:
             self.auto_scan_flagged.emit(request.auto_label, findings)
 
+    def _record_scan_history(self, request, stopped):
+        """A finished (never a stopped) scan with a scan_kind -> the last
+        scan / last full scan shown on the Dashboard and sidebar."""
+        if stopped or request is None or not request.scan_kind or self._controller is None:
+            return
+        scan_history.record_finished_scan(self._controller.config_store, request.scan_kind)
+        self.scan_recorded.emit()
+
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
         self._record_findings(self._current_request, self._current_findings)
+        self._record_scan_history(self._current_request, stopped)
         self._current_findings = []
         known_good_self = (self._current_results or {}).get("known_good_self", [])
         if (self._current_request is not None and not self._current_request.is_auto

@@ -462,6 +462,7 @@ class MainWindow(QMainWindow):
             self.scan_page.scan_active_changed.connect(self.tray_animator.set_scanning)
         self.scan_page.auto_scan_flagged.connect(self._on_auto_scan_flagged)
         self.scan_page.manual_scan_results.connect(self.results_store.set_last_scan)
+        self.scan_page.scan_recorded.connect(self.refresh_last_scan)
 
         # Windows is logging off / shutting down: never hold that up with
         # the unreviewed-results reminder (see _ok_to_quit).

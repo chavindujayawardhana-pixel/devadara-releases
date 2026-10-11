@@ -9,13 +9,11 @@ the protection status (AutoScanController.protection_level_changed,
 connected to set_protection_level by MainWindow - the same signal and the
 same protection_modules.LEVEL_VIEW label/colour as the sidebar's status
 box, so the two always agree), the last scan (scan_history.py) and
-threat/suspicious counts (devadara.scan_log.read_findings()) are real. Nothing in the backend currently persists a "files scanned"
-running total or a "last scan" timestamp for any of the interactive scan
-tools (scan_cli.py, full_drive_scan_cli.py, downloads_scan_cli.py,
-usb_scan_cli.py never write to scan_log.jsonl - only the unattended
-startup_protect.py sweep does, and only for notable findings, never a
-clean-scan tally) - those two show an honest empty state ("—" / "Never")
-rather than a fake or stale number.
+threat/suspicious counts (devadara.scan_log.read_findings()) are real.
+Last Full Scan comes from scan_history (written by the Scan page when a
+scan finishes; "Never" until an untouched Full Scan has finished). Nothing
+persists a "files scanned" running total, so that one shows an honest "—"
+rather than a fake number.
 """
 
 from PySide6.QtCore import Qt, Signal
@@ -92,7 +90,7 @@ def integrity_summary(result):
 
 def _gather_stats():
     """Pull real values from the backend. Returns a dict - see module
-    docstring for which two fields have no real backend source yet."""
+    docstring for the one field with no real backend source yet."""
     findings = scan_log.read_findings()
     threats = sum(1 for entry in findings if entry.get("tier") in THREAT_TIERS)
     suspicious = sum(1 for entry in findings if entry.get("tier") == "suspicious")
@@ -101,7 +99,6 @@ def _gather_stats():
         "files_scanned": "—",  # no backend source yet
         "threats": threats,
         "suspicious": suspicious,
-        "last_full_scan": "Never",  # no backend source yet
     }
 
 
@@ -184,6 +181,8 @@ class DashboardPage(QWidget):
 
     def refresh_last_scan(self):
         """A scan finished (or the page is shown): re-read scan_history."""
+        self._last_full_scan_card.set_value(scan_history.last_full_scan_text(self._config_store))
+        self._last_full_scan_card.setToolTip(scan_history.last_full_scan_tooltip(self._config_store))
         self._apply_protection_level()
 
     def _apply_protection_level(self):
@@ -204,7 +203,9 @@ class DashboardPage(QWidget):
             variant="warn" if stats["suspicious"] else "default",
         )
         row.addWidget(self._suspicious_card)
-        row.addWidget(StatCard("Last Full Scan", stats["last_full_scan"]))
+        self._last_full_scan_card = StatCard("Last Full Scan",
+                                             scan_history.last_full_scan_text(self._config_store))
+        row.addWidget(self._last_full_scan_card)
         return row
 
     def _build_integrity_strip(self):
