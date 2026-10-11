@@ -23,3 +23,9 @@ data/*.tmp
 # Scratch dumps
 *_dump.txt
 dump_*.txt
+
+# Integrity signing: the private key never belongs in the repo; build output
+*.pem
+integrity_private*
+dist/
+build/
