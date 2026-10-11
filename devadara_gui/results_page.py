@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from devadara import ignore_list, quarantine, scan_log
+from devadara import ignore_list, quarantine, scan_log, verdict_labels
 from devadara.hash_scanner import compute_sha256
 from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
@@ -105,6 +105,14 @@ def signature_text(result):
     # signature was valid - say exactly that much.
     publisher = (result.get("details") or {}).get("publisher")
     return f"Publisher: {publisher}" if publisher else None
+
+
+def verdict_cell(result, check_self=True):
+    """A table cell for a result's verdict: the plain-words label plus
+    the raw tier, coloured with the label's theme token (see
+    devadara/verdict_labels.py). Display only - never a verdict change."""
+    text, token = verdict_labels.verdict_text(result, check_self)
+    return text, getattr(theme, token)
 
 
 def reason_text(result):
@@ -281,7 +289,8 @@ class ResultsTab(QWidget):
         self.status.setVisible(bool(text))
 
     def set_rows(self, rows):
-        """rows: list of (cells, payload); len(cells) == len(columns)."""
+        """rows: list of (cells, payload); len(cells) == len(columns). A
+        cell is text, or (text, colour) for a coloured cell (verdicts)."""
         self._payloads = [payload for _cells, payload in rows]
         table = self.table
         table.clearSpans()
@@ -305,6 +314,9 @@ class ResultsTab(QWidget):
             check.setCheckState(Qt.CheckState.Unchecked)
             table.setItem(r, 0, check)
             for c, text in enumerate(cells, start=1):
+                color = None
+                if isinstance(text, tuple):
+                    text, color = text
                 text = str(text)
                 if c == self._priority_column:
                     # One line per part of the reason ("YARA: ..." /
@@ -313,6 +325,8 @@ class ResultsTab(QWidget):
                 item = QTableWidgetItem(text)
                 item.setFlags(Qt.ItemFlag.ItemIsEnabled)
                 item.setToolTip(text)
+                if color:
+                    item.setForeground(QColor(color))
                 if c == self._path_column:
                     item.setForeground(QColor(theme.CYAN))
                     font = QFont(item.font())
@@ -617,7 +631,8 @@ class ResultsPage(QWidget):
         for item in self.virus_items():
             status = "On disk" if os.path.isfile(item["file_path"]) else "File missing"
             sources = ", ".join(SOURCE_LABELS.get(s, s or "?") for s in item["sources"])
-            rows.append(([item["threat"] or NOTHING, item["tier"], item["file_path"], sources, status], item))
+            rows.append(([item["threat"] or NOTHING, verdict_cell(item), item["file_path"], sources, status],
+                         item))
         self.tabs["Virus"].set_rows(rows)
         return len(rows)
 
@@ -639,7 +654,11 @@ class ResultsPage(QWidget):
             name = entry.get("name") or entry.get("location") or "?"
             scan = entry.get("scan") or {}
             reason = reason_text(scan)
-            verdict = scan.get("tier", NOTHING) + (f" — {reason}" if reason else "")
+            if scan.get("tier"):
+                label, color = verdict_cell({**scan, "file_path": target})
+                verdict = (label + (f" — {reason}" if reason else ""), color)
+            else:
+                verdict = NOTHING
             rows.append(([name, entry.get("source", "?"), target or NOTHING, verdict, status], entry))
         self.tabs["Startup"].set_rows(rows)
         return len(rows)
@@ -665,7 +684,8 @@ class ResultsPage(QWidget):
             # the threat name - treat that as "nothing recorded".
             rows.append(([os.path.basename(original) or "?",
                           NOTHING if threat in _PLACEHOLDERS else threat,
-                          entry.get("tier") or NOTHING, (entry.get("quarantined_at") or "").replace("T", " "),
+                          verdict_cell(entry, check_self=False) if entry.get("tier") else NOTHING,
+                          (entry.get("quarantined_at") or "").replace("T", " "),
                           original or NOTHING], entry))
         self.tabs["Quarantine"].set_rows(rows)
         return len(rows)
@@ -684,7 +704,8 @@ class ResultsPage(QWidget):
             scan = proc.get("scan") or {}
             if scan.get("tier") in THREAT_TIERS:
                 reason = reason_text(scan)
-                why.append(f"its file: {scan['tier']}" + (f" ({reason})" if reason else ""))
+                label, _color = verdict_cell({**scan, "file_path": proc.get("exe")})
+                why.append(f"its file: {label}" + (f" ({reason})" if reason else ""))
             rows.append(([proc.get("name") or "?", str(proc["pid"]), proc.get("exe") or NOTHING,
                           "; ".join(why) or NOTHING, self.process_status(proc)], proc))
         self.tabs["Process"].set_rows(rows)
