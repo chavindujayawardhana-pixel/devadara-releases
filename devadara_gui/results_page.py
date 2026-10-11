@@ -121,14 +121,18 @@ def reason_text(result):
     fields that exist: the threat name (hash match / high-severity YARA),
     YARA rule names (a "suspicious" YARA match sets no threat name), the
     ML score, and the trusted-publisher-name downgrade. None if the data
-    holds none of these - e.g. an auto-scan log entry for a YARA match,
-    since the scan log doesn't record rule names."""
+    holds none of these - e.g. an older auto-scan log entry for a YARA
+    match, written before the log recorded rule names ("yara_rules")."""
     details = result.get("details") or {}
     parts = []
     threat = result.get("threat_name") or details.get("threat_name")
     if threat not in _PLACEHOLDERS:
         parts.append(threat)
-    rules = [m["rule"] for m in (result.get("yara") or []) if m.get("rule")]
+    # Rule names from a fresh scan result, or - for a scan-log entry - the
+    # optional "yara_rules" field (absent on older log lines).
+    logged_rules = details.get("yara_rules")
+    rules = ([m["rule"] for m in (result.get("yara") or []) if m.get("rule")]
+             or [r for r in (logged_rules if isinstance(logged_rules, list) else []) if isinstance(r, str) and r])
     if rules and not (threat or "").startswith("YARA:"):
         parts.append("YARA: " + ", ".join(rules))
     ml = result.get("ml") or {}

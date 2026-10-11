@@ -82,6 +82,10 @@ def record_scan_result(result, source):
 
     ml = result.get("ml") or {}
     signature = result.get("signature") or {}
+    # Matched YARA rule NAMES only (optional field, only when something
+    # matched) - older lines without it still load and display as before.
+    yara_rules = [m["rule"] for m in (result.get("yara") or []) if m.get("rule")]
+    extra = {"yara_rules": yara_rules} if yara_rules else {}
     append_finding(
         source=source,
         tier=result["tier"],
@@ -91,6 +95,7 @@ def record_scan_result(result, source):
         confidence=ml.get("confidence"),
         publisher=signature.get("publisher"),
         downgraded_from_malware=result.get("downgraded_from_malware", False),
+        **extra,
     )
     return result["tier"]
 
