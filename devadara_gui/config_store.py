@@ -23,10 +23,29 @@ from devadara.app_paths import state_file
 
 CONFIG_PATH = state_file("gui_state.json")
 
+# Settings › General (settings_page.py). Auto-delete has exactly these two
+# values - never a third, and nothing in the app ever deletes on its own.
+TRAY_NOTIFICATIONS_KEY = "tray_notifications"
+AUTO_DELETE_KEY = "auto_delete"
+AUTO_DELETE_ASK = "ask"      # Delete Permanently works, behind its confirmation (default)
+AUTO_DELETE_NEVER = "never"  # every Delete action in the GUI is disabled
+
 DEFAULTS = {
     "downloads_autoscan_enabled": True,
     "usb_autoscan_enabled": True,
+    TRAY_NOTIFICATIONS_KEY: True,
+    AUTO_DELETE_KEY: AUTO_DELETE_ASK,
 }
+
+
+def tray_notifications_on(config_store):
+    return config_store is None or config_store.get(TRAY_NOTIFICATIONS_KEY, True) is not False
+
+
+def delete_allowed(config_store):
+    """False only for an explicit "never" - any other stored value reads as
+    the default "ask"."""
+    return config_store is None or config_store.get(AUTO_DELETE_KEY) != AUTO_DELETE_NEVER
 
 
 class ConfigStore:

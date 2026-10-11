@@ -563,6 +563,44 @@ def build_stylesheet():
             border: none;
         }}
 
+        /* ─── Settings page (settings_page.py) - the mockup's
+               .settings-nav-item + .setting-row ─── */
+        QPushButton#settingsNavItem {{
+            text-align: left;
+            padding: 10px 14px;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            background: transparent;
+            color: {TEXT_DIM};
+        }}
+
+        QPushButton#settingsNavItem:hover {{
+            color: {TEXT};
+            border-color: {BORDER};
+        }}
+
+        QPushButton#settingsNavItem:checked {{
+            color: {NEON};
+            background: {rgba_css((0, 255, 170, 20))};
+            border: 1px solid {NEON};
+        }}
+
+        QFrame#settingRowDivider {{
+            background: transparent;
+            border: none;
+            border-bottom: 1px dashed {BORDER};
+            max-height: 1px;
+            min-height: 1px;
+        }}
+
+        QLabel#settingName {{
+            color: {TEXT};
+        }}
+
+        QLabel#settingDesc {{
+            color: {TEXT_DIM};
+        }}
+
         /* ─── Confirmation dialog (dialogs.py) ─── */
         QDialog#confirmDialog {{
             background: {PANEL_SOLID};

@@ -183,3 +183,24 @@ def remove_findings(ids_to_remove):
             f.write(json.dumps(entry) + "\n")
 
     os.replace(temp_path, LOG_PATH)
+
+
+def clear_findings():
+    """
+    Empty the findings log (LOG_PATH) - the GUI's Settings › "Clear scan
+    history", always after a confirmation. Only this one file:
+    PROCESS_ACTIONS_PATH, quarantine, the ignore list and every other
+    data file are never touched. Same temp file + os.replace() pattern as
+    remove_findings(). Returns True on success, False if it couldn't be
+    written; never raises.
+    """
+    temp_path = LOG_PATH + ".tmp"
+    try:
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+        with open(temp_path, "w", encoding="utf-8"):
+            pass
+        os.replace(temp_path, LOG_PATH)
+    except OSError as exc:
+        print(f"[WARNING] Could not clear scan log: {exc}")
+        return False
+    return True

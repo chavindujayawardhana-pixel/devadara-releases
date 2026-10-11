@@ -47,7 +47,7 @@ from devadara import ignore_list, quarantine, scan_log, self_integrity, verdict_
 from devadara.hash_scanner import compute_sha256
 from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
-from devadara_gui import dialogs, theme
+from devadara_gui import config_store as config, dialogs, theme
 from devadara_gui.components import Button, PageHeader
 from devadara_gui.file_location import open_in_explorer
 from devadara_gui.process_guard import refusal_reason, still_same_process
@@ -55,6 +55,9 @@ from devadara_gui.process_guard import refusal_reason, still_same_process
 THREAT_TIERS = ("known_bad", "malware", "suspicious")
 SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
 LARGE_FILE_BYTES = 200 * 1024 * 1024  # quarantine reads the whole file into memory
+DELETE_DISABLED_TIP = ("Disabled in Settings › General › Auto-delete (Never). "
+                       "Quarantine and Restore still work.")
+DELETE_DISABLED_NOTE = "// turned off in Settings"
 
 # Where the user can remove a startup entry themselves - DEVADARA never does.
 STARTUP_REMOVAL_HINTS = {
@@ -464,10 +467,13 @@ class ResultsTab(QWidget):
 class ResultsPage(QWidget):
     TABS = ["Virus", "Startup", "Hidden", "Quarantine", "Process"]
 
-    def __init__(self, store, guard, parent=None):
+    def __init__(self, store, guard, config_store=None, parent=None):
         super().__init__(parent)
         self._store = store
         self._guard = guard
+        # Settings › General › Auto-delete - read here and on every change
+        # (set_delete_allowed); delete_checked() re-checks it too.
+        self._config = config_store
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(40, 30, 40, 30)
@@ -541,6 +547,14 @@ class ResultsPage(QWidget):
         quarantined = self.tabs["Quarantine"]
         self.restore_button = quarantined.add_action("Restore Checked", self.restore_checked)
         self.delete_button = quarantined.add_action("Delete Permanently", self.delete_checked)
+        # Always visible beside the button while it's off - a disabled
+        # button takes no clicks, so its tooltip alone is easy to miss.
+        self.delete_off_note = QLabel(DELETE_DISABLED_NOTE)
+        self.delete_off_note.setFont(theme.letter_spaced_font(size=8, spacing=0.3))
+        self.delete_off_note.setStyleSheet(f"color: {theme.WARN};")
+        self.delete_off_note.setToolTip(DELETE_DISABLED_TIP)
+        quarantined.actions.insertWidget(quarantined.actions.count() - 1, self.delete_off_note)
+        self.set_delete_allowed(config.delete_allowed(config_store))
         self._tab_buttons[0].setChecked(True)
 
         store.changed.connect(self.refresh)
@@ -999,8 +1013,18 @@ class ResultsPage(QWidget):
             text += " — " + self._refused_text(refused)
         tab.set_status(text, theme.WARN if failed else theme.NEON)
 
+    def set_delete_allowed(self, allowed):
+        """Settings › Auto-delete: "Never" disables Delete Permanently (the
+        only GUI action that deletes a file). Quarantine/Restore unaffected."""
+        self.delete_button.setEnabled(allowed)
+        self.delete_button.setToolTip("" if allowed else DELETE_DISABLED_TIP)
+        self.delete_off_note.setVisible(not allowed)
+
     def delete_checked(self):
         tab = self.tabs["Quarantine"]
+        if not config.delete_allowed(self._config):
+            tab.set_status("// delete is turned off — " + DELETE_DISABLED_TIP, theme.WARN)
+            return
         checked = tab.checked_payloads()
         if not checked:
             tab.set_status("// tick at least one file first", theme.TEXT_DIM)

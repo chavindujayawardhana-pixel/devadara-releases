@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from devadara import scan_log
 from devadara.self_integrity import BAD_SIGNATURE, PROBLEMS
-from devadara_gui import dialogs, protection_modules, scan_history, theme
+from devadara_gui import config_store as config, dialogs, protection_modules, scan_history, theme
 from devadara_gui.auto_scan_controller import AutoScanController
 from devadara_gui.behavior_alert_popup import BehaviorAlertPopup
 from devadara_gui.process_guard import ProcessGuard
@@ -42,6 +42,7 @@ from devadara_gui.integrity_check import IntegrityChecker
 from devadara_gui.protection_page import ProtectionPage
 from devadara_gui.results_page import ResultsPage
 from devadara_gui.scan_page import ScanPage
+from devadara_gui.settings_page import SettingsPage
 
 # The processed (transparent-cornered) icon - used for the window/taskbar
 # icon, the sidebar logo, and the Mini-Form popup header, so all three are
@@ -63,14 +64,9 @@ NAV_ITEMS = [
     ("⚙", "Settings"),          # ⚙
 ]
 
-# Dashboard (index 0), Scan (index 1), Protection (index 2) and Results
-# (index 3) have real content - see DashboardPage/ScanPage/ProtectionPage/
-# ResultsPage. The rest are still placeholders; this list stays in
-# NAV_ITEMS order starting from index 4 so PLACEHOLDER_PAGES[i] lines up
-# with NAV_ITEMS[i + 4].
-PLACEHOLDER_PAGES = [
-    ("Settings", "// configure system preferences"),
-]
+# Every NAV_ITEMS page has real content (DashboardPage, ScanPage,
+# ProtectionPage, ResultsPage, SettingsPage). PagePlaceholder stays for any
+# page added later before its content exists.
 
 
 def _divider():
@@ -436,10 +432,11 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.scan_page)
         self.protection_page = ProtectionPage(self.auto_scan_controller)
         self.stack.addWidget(self.protection_page)
-        self.results_page = ResultsPage(self.results_store, self.process_guard)
+        self.results_page = ResultsPage(self.results_store, self.process_guard,
+                                        config_store=self.auto_scan_controller.config_store)
         self.stack.addWidget(self.results_page)
-        for title, subtitle in PLACEHOLDER_PAGES:
-            self.stack.addWidget(PagePlaceholder(title, subtitle))
+        self.settings_page = SettingsPage(self.auto_scan_controller.config_store)
+        self.stack.addWidget(self.settings_page)
         layout.addWidget(self.stack, 1)
 
         self.setCentralWidget(central)
@@ -473,6 +470,14 @@ class MainWindow(QMainWindow):
         self.scan_page.auto_scan_flagged.connect(self._on_auto_scan_flagged)
         self.scan_page.manual_scan_results.connect(self.results_store.set_last_scan)
         self.scan_page.scan_recorded.connect(self.refresh_last_scan)
+        self.scan_page.scan_completed.connect(self._on_scan_completed)
+
+        # Settings › General: Auto-delete gates the Results page's Delete
+        # Permanently; Clear scan history -> re-read the emptied scan log.
+        self.settings_page.auto_delete_changed.connect(
+            lambda value: self.results_page.set_delete_allowed(value != config.AUTO_DELETE_NEVER))
+        self.settings_page.history_cleared.connect(self.results_page.refresh)
+        self.settings_page.history_cleared.connect(self.dashboard_page.refresh_stats)
 
         # Windows is logging off / shutting down: never hold that up with
         # the unreviewed-results reminder (see _ok_to_quit).
@@ -499,9 +504,9 @@ class MainWindow(QMainWindow):
     def _on_auto_scan_flagged(self, label, findings):
         """Tray notification for an auto-scan's findings - only while the
         window is hidden/minimized (otherwise the scan popup already shows
-        the result). Qt's own tray balloon, no PowerShell. Never acts on the
-        findings."""
-        if self.tray_icon is None or (self.isVisible() and not self.isMinimized()):
+        the result). Qt's own tray balloon, no PowerShell. Off with Settings ›
+        Notifications. Never acts on the findings."""
+        if not self._tray_message_wanted():
             return
         first = findings[0]
         area = label.split(":", 1)[0]  # "Downloads" / "USB drive" / "Startup scan"
@@ -511,6 +516,28 @@ class MainWindow(QMainWindow):
             f"DEVADARA: {len(findings)} item(s) flagged",
             f"{area}: {name} — {first['tier']}{more}. Open DEVADARA to review.",
             QSystemTrayIcon.MessageIcon.Warning,
+            TRAY_MESSAGE_MS,
+        )
+
+    def _tray_message_wanted(self):
+        """The "item(s) flagged" and "scan finished" tray messages: only
+        while the window is hidden/minimized, and only with Settings ›
+        Notifications on. (The ransomware-alert and app-integrity messages
+        don't use this - they always show.)"""
+        if self.tray_icon is None or (self.isVisible() and not self.isMinimized()):
+            return False
+        return config.tray_notifications_on(self.auto_scan_controller.config_store)
+
+    def _on_scan_completed(self, kind, checked, threats, flagged_announced):
+        """Tray message for a finished manual scan or startup scan - skipped
+        when the "item(s) flagged" message already went out for it."""
+        if flagged_announced or not self._tray_message_wanted():
+            return
+        self.tray_icon.showMessage(
+            "DEVADARA: scan finished",
+            f"{kind} finished — {checked} file(s) checked, {threats} flagged."
+            + (" Open DEVADARA to review." if threats else ""),
+            QSystemTrayIcon.MessageIcon.Warning if threats else QSystemTrayIcon.MessageIcon.Information,
             TRAY_MESSAGE_MS,
         )
 

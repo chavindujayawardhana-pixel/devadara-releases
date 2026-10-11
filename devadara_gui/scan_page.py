@@ -130,6 +130,12 @@ class ScanPage(QWidget):
     # ScanWorker.results of a finished MANUAL scan (stopped ones too) - the
     # Results page's in-memory "last scan" (see results_store.py).
     manual_scan_results = Signal(dict)
+    # (scan_kind, checked, threats, flagged_announced) - a scan with a
+    # scan_kind (manual or the startup sweep, never a per-file Downloads/USB
+    # auto-scan) FINISHED (not stopped). flagged_announced: auto_scan_flagged
+    # already went out for it. MainWindow turns it into the "scan finished"
+    # tray message (Settings › Notifications).
+    scan_completed = Signal(str, int, int, bool)
 
     def __init__(self, navigate=None, main_window=None, controller=None, parent=None):
         """navigate: callable(index) - switches both the content stack and
@@ -634,8 +640,12 @@ class ScanPage(QWidget):
         self.scan_recorded.emit()
 
     def _on_scan_finished(self, stopped, checked, threats, hidden, elapsed):
-        self._record_findings(self._current_request, self._current_findings)
-        self._record_scan_history(self._current_request, stopped)
+        request = self._current_request
+        flagged_announced = bool(request is not None and request.is_auto and self._current_findings)
+        self._record_findings(request, self._current_findings)
+        self._record_scan_history(request, stopped)
+        if not stopped and request is not None and request.scan_kind:
+            self.scan_completed.emit(request.scan_kind, checked, threats, flagged_announced)
         self._current_findings = []
         known_good_self = (self._current_results or {}).get("known_good_self", [])
         if (self._current_request is not None and not self._current_request.is_auto

@@ -65,8 +65,8 @@ integration script, not an automated test.
 
 `gui_app.py` is the entry point (single-instance guard, `--autostart`
 handling, `multiprocessing.freeze_support()`). `main_window.py` holds
-`MainWindow`: sidebar + page stack (Dashboard, Scan, Protection, Results;
-Settings is still a placeholder), the tray icon, and the scan-running orbit
+`MainWindow`: sidebar + page stack (Dashboard, Scan, Protection, Results,
+Settings), the tray icon, and the scan-running orbit
 animation (`components.ScanOrbitLogo` in the sidebar, `TrayOrbitAnimator`
 on the tray; layers `assets/app_icon_base.png` + `app_icon_orbit.png`).
 Colours/sizes are tokens in `theme.py` — don't add new colours.
@@ -147,6 +147,27 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
     forgotten — nothing ignored, quarantined or marked safe, scan-log
     findings stay. Never shown for the logon auto-hide or during Windows
     logoff/shutdown (`commitDataRequest`).
+
+- **Settings page** — `settings_page.py`: tabs General / Exceptions /
+  About (the last two say "coming soon"). General, saved in
+  `gui_state.json` (STATE_DIR, never in the integrity manifest):
+  - Notifications (`tray_notifications`): gates ONLY the "item(s)
+    flagged" and "scan finished" tray messages (`MainWindow.
+    _tray_message_wanted`). Never hides anything in the app; the
+    ransomware-alert and app-integrity tray messages always show.
+  - **Auto-delete rule** (`auto_delete`): exactly two values, "ask"
+    (default — today's typed-DELETE confirmation) and "never" (every GUI
+    Delete action disabled with a tooltip, and `delete_checked()` refuses
+    too; Quarantine/Restore keep working). Never add a third option or any
+    automatic deletion. Today the only GUI delete path is Results ›
+    Quarantine › Delete Permanently — any new one must honour
+    `config_store.delete_allowed()`.
+  - Clear scan history: after `dialogs.confirm()`, `scan_log.
+    clear_findings()` empties `scan_log.jsonl` only — never quarantine,
+    the ignore list, the hash/publisher lists, `process_actions.jsonl` or
+    the last-scan values.
+  - Protection toggles stay on the Protection page only. No large-file
+    limit or archive scanning (the engine supports neither).
 
 ## Architecture: the detection pipeline
 
