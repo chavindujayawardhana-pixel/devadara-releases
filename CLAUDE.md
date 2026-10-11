@@ -38,6 +38,21 @@ venv\Scripts\python.exe startup_cli.py enable|disable|status|review-log
 one-off step (see "train once, bundle, never retrain automatically" below);
 nothing in the app itself calls it.
 
+Owner-only integrity tools (see "Self-integrity" below):
+
+```
+venv\Scripts\python.exe tools\integrity_keygen.py <key path OUTSIDE the repo>   # once: create the signing key
+venv\Scripts\python.exe tools\sign_manifest.py --dist dist\DEVADARA --key <key> # after every release build
+```
+
+Where files live is decided only by `devadara/app_paths.py`: read-only
+program files via `app_file()` (`APP_DIR`), files the app writes via
+`state_file()` (`STATE_DIR`). From source both are exactly the old paths
+(project root / `data\`); in a PyInstaller `--onedir` build program files
+come from the bundle (`_internal`) and state goes to
+`%LOCALAPPDATA%\DEVADARA`. New code must use these, never its own
+`dirname(__file__)` root.
+
 Manual behavior-monitor test (two terminals): run `monitor_cli.py` watching
 a folder in one, then `python tests/simulate_ransomware.py` in the other —
 it mimics ransomware's file-activity *pattern* (fast bulk rewrites/renames)
@@ -77,8 +92,19 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
   processes, anything under `%SystemRoot%`, DEVADARA itself and recycled
   PIDs (start time re-checked). Every attempt is logged to
   `data/process_actions.jsonl`.
+- **App integrity** — the Dashboard's one-row "App integrity" strip
+  (inside a vertical-only scroll area, so a short window scrolls instead
+  of squashing the cards) shows `self_integrity.check_install()`'s result,
+  run by `integrity_check.IntegrityChecker` on a `QThread` (hashing only)
+  ~3 s after `start_background_init()` and on "Check now" (read-only, so
+  no confirm dialog). Problem file lists are in its tooltip; a problem
+  found while the window is hidden raises a tray message. From source it
+  always says "NOT A SIGNED BUILD".
 - **Results page** — `results_page.py`, five tabs (Virus, Startup, Hidden,
-  Quarantine, Process). Data: the last MANUAL scan's results, kept in
+  Quarantine, Process). Verdicts show a plain label + the raw tier
+  (`devadara/verdict_labels.py`, display only): Known Good (genuine
+  DEVADARA file or Ignored), High Risk (known_bad/malware), Suspicious,
+  else Not flagged — a valid signature alone is never Known Good. Data: the last MANUAL scan's results, kept in
   memory only (`results_store.ResultsStore`, fed by `ScanWorker.results`;
   dropped on quit, auto-scans don't replace it) + `data/scan_log.jsonl`
   findings + the quarantine index. `reason_text()` builds the "why
@@ -96,7 +122,7 @@ Colours/sizes are tokens in `theme.py` — don't add new colours.
     Unhide All — Hidden attribute only, never Hidden+System files
     (Hidden), Restore / Delete Permanently (Quarantine), Suspend / Resume /
     Kill via the shared app-wide `ProcessGuard` (Process). Files under
-    `%SystemRoot%` are refused. The header "select all" box only ticks
+    `%SystemRoot%` and genuine DEVADARA files are refused. The header "select all" box only ticks
     rows — it must never run an action, and there is no "Ignore all".
   - **Open in Explorer** = `file_location.open_in_explorer()`
     (`explorer /select,` with the path as its own argument). Never
@@ -218,6 +244,50 @@ pipeline.
   the same startup sweep + watchers, notifying via PowerShell toasts
   (`notifier.py`).
 
+## Self-integrity (DEVADARA checking its own files)
+
+- **Manifest** — `devadara/self_integrity.py`. `tools/sign_manifest.py`
+  hashes every covered file of a FINISHED `--onedir` build into
+  `integrity_manifest.json` and signs those exact bytes with Ed25519
+  (`cryptography`) into `integrity_manifest.sig`, both next to the exe.
+  `MANIFEST_RULES` (`is_covered()`) is the one rule set for what's
+  covered: all program files incl. the two static lists
+  `known_bad_hashes.json` / `trusted_publishers.json`; never runtime state
+  (every other `data/*.json(l)`, `data/quarantine/`, logs), `__pycache__`,
+  or top-level `tests/`, `venv/`, `build/`, `dist/`.
+- **Why `--onedir` and sign AFTER the build** — a `--onefile` exe would
+  have to contain the manifest, which contains the exe's hash, which
+  changes once the manifest is inside it: circular. Onefile also unpacks
+  to a fresh user-writable `%TEMP%\_MEI…` each run. With onedir the
+  manifest sits beside the exe and the files on disk are the files that
+  run. Any rebuild → sign again.
+- **Keys** — only the PUBLIC key is in the app (`devadara/integrity_pubkey.py`,
+  `None` until the owner runs `tools/integrity_keygen.py`; then every check
+  says "not a signed build" and nothing is Known Good). The private key
+  is passphrase-encrypted, kept outside the repo and every build (the
+  tools refuse otherwise; `*.pem`, `integrity_private*`, `dist/`, `build/`
+  are git-ignored). Backup steps are in `integrity_keygen.py`'s docstring:
+  two offline copies, passphrase stored separately, fingerprint written
+  down, test-restore once; a lost or stolen key means a new key + new build.
+- **Genuine DEVADARA file** = `self_integrity.is_verified_self_file()`:
+  signature valid, path under the install folder and listed, content hash
+  matches (re-hashed at action time). Such a file is:
+  - never quarantined — `quarantine.quarantine_file()` refuses it (covers
+    the GUI, Startup Review and every CLI);
+  - routed, not skipped — it is still scanned like any file and its tier
+    is left untouched, but `ScanWorker` / `startup_protect` put it in
+    `known_good_self` instead of the threat list, scan log, tray alert and
+    Startup tab; the scan-complete card names them ("N DEVADARA files
+    verified (Known Good)", tooltip: path + what the scan said).
+  A changed or unlisted file in DEVADARA's folder is an ordinary file.
+- **Limits (say them honestly)** — protects against corrupted or swapped
+  program files (rules, model, `yara64.exe`, DLLs, the static lists) and
+  DEVADARA flagging/quarantining itself. It does NOT protect against
+  someone replacing `DEVADARA.exe` or other code holding the check or the
+  public key (they control the check), admin/kernel malware, a stolen
+  private key, edits to runtime state (e.g. an Ignore entry makes a file
+  Known Good), swaps between checks, or running from source.
+
 ## Project rules worth preserving
 
 - **Never auto-confirm a threat.** Every destructive/consequential action
@@ -243,3 +313,11 @@ pipeline.
 - File paths passed to any shelled-out process (PowerShell, yara64.exe)
   must be bound as separate arguments/parameters, never interpolated into
   command/script text.
+- **Never exclude DEVADARA's own folder from scanning.** Genuine DEVADARA
+  files are recognised one by one against the signed manifest and routed
+  (see "Self-integrity"), never skipped; anything changed or dropped into
+  the folder must still be flagged like anywhere else.
+- **Verdict labels are display only.** `verdict_labels.py` never changes a
+  tier, and a valid digital signature alone never means Known Good.
+- **The integrity private key never enters the repo or a build.** Only the
+  public key ships.
