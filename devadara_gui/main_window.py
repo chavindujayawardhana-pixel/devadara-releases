@@ -459,6 +459,10 @@ class MainWindow(QMainWindow):
         self.integrity_checker.finished.connect(self.dashboard_page.set_integrity_result)
         self.integrity_checker.finished.connect(self._on_integrity_result)
         self.dashboard_page.integrity_check_requested.connect(self.integrity_checker.start)
+        # Settings › About shows the same check (and can start it too).
+        self.integrity_checker.started.connect(self.settings_page.set_integrity_checking)
+        self.integrity_checker.finished.connect(self.settings_page.set_integrity_result)
+        self.settings_page.integrity_check_requested.connect(self.integrity_checker.start)
 
         # Orbit animation while any scan runs (manual, Downloads, USB,
         # queued) - see ScanPage.scan_active_changed.

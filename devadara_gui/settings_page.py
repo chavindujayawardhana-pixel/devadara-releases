@@ -3,8 +3,7 @@ settings_page.py
 
 The Settings page: the mockup's left settings nav + one pane per tab
 (assets/deepseek_html_20260917_f4ed9f.html, .settings-layout), with the
-owner's three tabs - General, Exceptions, About. Only General has content
-so far; the other two say "coming soon".
+owner's three tabs - General, Exceptions, About.
 
 General - every control is real and saved in gui_state.json (STATE_DIR,
 config_store.py - runtime state, never in the integrity manifest):
@@ -28,6 +27,12 @@ Exceptions - the ignore list (devadara/ignore_list.py, data/ignored_files.json):
     same ignore_list.add() the Results page's Ignore uses, after a
     confirmation. DEVADARA's own folders are refused; Windows system files
     get an extra warning.
+
+About - one card, one row each: app, version (devadara/version.py),
+developer, app integrity (the Dashboard's own check and wording, run by
+MainWindow's IntegrityChecker on its thread), the data folder (STATE_DIR),
+privacy, and two "coming in a future version" buttons. Nothing on this tab
+goes online - no URLs, no browser, no network calls.
 """
 
 import os
@@ -48,12 +53,16 @@ from PySide6.QtWidgets import (
 
 from devadara import app_paths, ignore_list, memory, scan_log
 from devadara.hash_scanner import compute_sha256
+from devadara.version import APP_VERSION
 from devadara_gui import config_store as config, dialogs, theme
+from devadara_gui.dashboard_page import integrity_summary
 from devadara_gui.components import Button, Card, ElidedLabel, PageHeader, RadioItem, ToggleSwitch
 
 TABS = ["General", "Exceptions", "About"]
 PAGE_SUBTITLE = "// configure system preferences"
-TAB_SUBTITLES = {"Exceptions": "// ignored files · add or remove them here"}
+TAB_SUBTITLES = {"Exceptions": "// ignored files · add or remove them here",
+                 "About": "// about DEVADARA"}
+COMING_LATER = "// coming in a future version"
 
 SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
 
@@ -183,6 +192,9 @@ class SettingsPage(QWidget):
     history_cleared = Signal()
     # An entry was added to / removed from the ignore list.
     ignore_list_changed = Signal()
+    # About › App integrity "Check now" - MainWindow runs the existing
+    # IntegrityChecker and feeds the result back (set_integrity_*).
+    integrity_check_requested = Signal()
 
     def __init__(self, config_store, parent=None):
         super().__init__(parent)
@@ -205,7 +217,7 @@ class SettingsPage(QWidget):
         self.stack = CurrentPaneStack()
         self.stack.addWidget(self._build_general())
         self.stack.addWidget(self._build_exceptions())
-        self.stack.addWidget(self._coming_soon("About"))
+        self.stack.addWidget(self._build_about())
         settings_layout.addWidget(self.stack, 1, Qt.AlignmentFlag.AlignTop)
         layout.addLayout(settings_layout)
         layout.addStretch(1)
@@ -335,20 +347,123 @@ class SettingsPage(QWidget):
         row.setSpacing(20)
         return widget, row
 
-    def _coming_soon(self, title):
-        card = Card(title)
-        label = QLabel("// coming soon")
-        label.setFont(theme.letter_spaced_font(size=8, spacing=1))
-        label.setStyleSheet(f"color: {theme.TEXT_DIM};")
-        card.content_layout.addWidget(label)
-        # Keep this short card at the top instead of stretched to fill
-        # whatever height the pane is given.
+    # ─── About ───
+
+    def _build_about(self):
+        card = Card("About")
+        rows = card.content_layout
+        rows.setSpacing(0)
+
+        def text_row(name, description):
+            widget, row = self._row()
+            row.addLayout(_text_column(name, description), 1)
+            rows.addWidget(widget)
+            rows.addWidget(_row_divider())
+
+        text_row("DEVADARA", "// offline, privacy-first antivirus")
+        text_row("Version", APP_VERSION)
+        text_row("Developer", "Chavindu Jayawardana")
+
+        # App integrity - the Dashboard's check and wording, not a second one
+        widget, row = self._row()
+        # Wraps instead of eliding: the Dashboard's one-line strip has to
+        # elide, this row has the room to show the whole status.
+        self.integrity_status = QLabel()
+        self.integrity_status.setWordWrap(True)
+        row.addLayout(self._label_over("App integrity", self.integrity_status), 1)
+        self.integrity_button = Button("Check now")
+        self.integrity_button.setToolTip("Compare DEVADARA's own program files with its signed "
+                                         "manifest again. Only reads files - changes nothing.")
+        self.integrity_button.clicked.connect(self.integrity_check_requested)
+        row.addWidget(self.integrity_button, 0, Qt.AlignmentFlag.AlignVCenter)
+        rows.addWidget(widget)
+        rows.addWidget(_row_divider())
+        self._show_integrity("WAITING — the self-check runs shortly after startup", "TEXT_DIM",
+                             "DEVADARA compares its own program files with its signed manifest.")
+
+        # Data folder - plain text, elided in the middle, full path in the tooltip
+        widget, row = self._row()
+        self.data_folder = ElidedLabel(app_paths.STATE_DIR)
+        self.data_folder.setObjectName("settingDesc")
+        row.addLayout(self._label_over("Data folder", self.data_folder), 1)
+        rows.addWidget(widget)
+        rows.addWidget(_row_divider())
+
+        text_row("Privacy", "100% offline. Nothing is uploaded. Your files stay on your computer.")
+
+        self.update_button, self.update_note = self._coming_later_row(
+            rows, "Updates", "Check for Update")
+        rows.addWidget(_row_divider())
+        self.report_button, self.report_note = self._coming_later_row(
+            rows, "Report", "Report a suspicious file")
+
+        # Keep the card at the top instead of stretched to the pane's height.
         pane = QWidget()
         pane_layout = QVBoxLayout(pane)
         pane_layout.setContentsMargins(0, 0, 0, 0)
         pane_layout.addWidget(card)
         pane_layout.addStretch(1)
         return pane
+
+    @staticmethod
+    def _name_label(name):
+        """_text_column()'s .setting-name label."""
+        label = QLabel(name.upper())
+        label.setObjectName("settingName")
+        label.setFont(theme.letter_spaced_font(size=9, bold=True, spacing=1.5))
+        return label
+
+    def _label_over(self, name, value_label):
+        """_text_column()'s look with a live label as the value."""
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(3)
+        column.addWidget(self._name_label(name))
+        value_label.setFont(theme.letter_spaced_font(size=8, spacing=0.5))
+        column.addWidget(value_label)
+        return column
+
+    def _coming_later_row(self, rows, name, button_text):
+        """A row whose button only shows "coming in a future version" under
+        it - nothing else, and never anything online."""
+        block = QWidget()
+        column = QVBoxLayout(block)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(0)
+        widget, row = self._row()
+        row.addWidget(self._name_label(name), 1, Qt.AlignmentFlag.AlignVCenter)
+        button = Button(button_text)
+        row.addWidget(button, 0, Qt.AlignmentFlag.AlignVCenter)
+        column.addWidget(widget)
+        note = QLabel(COMING_LATER)
+        note.setFont(theme.letter_spaced_font(size=8, spacing=1))
+        note.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        note.setContentsMargins(0, 0, 0, ROW_PADDING)
+        note.hide()
+        column.addWidget(note)
+        button.clicked.connect(note.show)
+        rows.addWidget(block)
+        return button, note
+
+    def _show_integrity(self, text, token, tooltip):
+        self.integrity_status.setText(text)
+        self.integrity_status.setToolTip(tooltip)
+        self.integrity_status.setStyleSheet(f"color: {getattr(theme, token)};")
+
+    def set_integrity_checking(self):
+        """IntegrityChecker.started - the Dashboard's wording."""
+        self.integrity_button.setEnabled(False)
+        self._show_integrity("CHECKING — comparing DEVADARA's files with its signed manifest…",
+                             "TEXT_DIM", "Only reads files - changes nothing.")
+
+    def set_integrity_result(self, result):
+        """IntegrityChecker.finished - the Dashboard's integrity_summary().
+        Never raises on an odd result."""
+        self.integrity_button.setEnabled(True)
+        try:
+            self._show_integrity(*integrity_summary(result or {}))
+        except Exception as exc:
+            self._show_integrity(f"CHECK COULDN'T RUN — {exc}", "WARN", "")
 
     # ─── Exceptions ───
 
