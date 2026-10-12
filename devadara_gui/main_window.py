@@ -478,6 +478,11 @@ class MainWindow(QMainWindow):
             lambda value: self.results_page.set_delete_allowed(value != config.AUTO_DELETE_NEVER))
         self.settings_page.history_cleared.connect(self.results_page.refresh)
         self.settings_page.history_cleared.connect(self.dashboard_page.refresh_stats)
+        # Settings › Exceptions added/removed an ignore-list entry. Neither
+        # page reads the ignore list today; refreshing keeps them in step
+        # if one ever does.
+        self.settings_page.ignore_list_changed.connect(self.results_page.refresh)
+        self.settings_page.ignore_list_changed.connect(self.dashboard_page.refresh_stats)
 
         # Windows is logging off / shutting down: never hold that up with
         # the unreviewed-results reminder (see _ok_to_quit).

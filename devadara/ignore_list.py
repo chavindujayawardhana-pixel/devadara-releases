@@ -16,6 +16,7 @@ in DEVADARA adds one on its own.
 
 import json
 import os
+import shutil
 from datetime import datetime
 
 from devadara.app_paths import state_file
@@ -31,6 +32,23 @@ def _key(path):
     return os.path.normcase(os.path.abspath(path))
 
 
+def _read_file():
+    """(entries, broken) straight from disk. Entries that aren't a dict with
+    a string path are dropped - is_ignored() must never trip over them."""
+    try:
+        with open(IGNORE_PATH, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {}, False
+    except (OSError, ValueError):
+        return {}, True
+    if not isinstance(raw, dict):
+        return {}, True
+    entries = {k: v for k, v in raw.items()
+               if isinstance(v, dict) and isinstance(v.get("path"), str)}
+    return entries, False
+
+
 def _load():
     try:
         stat = os.stat(IGNORE_PATH)
@@ -39,19 +57,27 @@ def _load():
         return {}
     if _cache["stamp"] == stamp and _cache["path"] == IGNORE_PATH:
         return _cache["entries"]
-    try:
-        with open(IGNORE_PATH, "r", encoding="utf-8") as f:
-            entries = json.load(f)
-        if not isinstance(entries, dict):
-            entries = {}
-    except (OSError, json.JSONDecodeError):
-        entries = {}
+    entries, _broken = _read_file()
     _cache.update(stamp=stamp, path=IGNORE_PATH, entries=entries)
     return entries
 
 
+def file_status():
+    """"ok", "missing" or "broken" (exists but can't be read as a list of
+    entries) - so Settings › Exceptions can say why the list looks empty."""
+    if not os.path.exists(IGNORE_PATH):
+        return "missing"
+    return "broken" if _read_file()[1] else "ok"
+
+
 def _save(entries):
     os.makedirs(os.path.dirname(IGNORE_PATH), exist_ok=True)
+    # A broken file is kept as .broken once, never silently overwritten.
+    if os.path.exists(IGNORE_PATH) and _read_file()[1]:
+        try:
+            shutil.copy2(IGNORE_PATH, IGNORE_PATH + ".broken")
+        except OSError:
+            pass
     temp_path = IGNORE_PATH + ".tmp"
     with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(entries, f, indent=2)
@@ -83,6 +109,11 @@ def remove(path):
 def is_ignored(path, file_hash):
     entry = _load().get(_key(path))
     return entry is not None and file_hash is not None and entry.get("hash") == file_hash
+
+
+def is_listed(path):
+    """The stored entry for this path (whatever its fingerprint), or None."""
+    return _load().get(_key(path))
 
 
 def list_ignored():

@@ -601,6 +601,19 @@ def build_stylesheet():
             color: {TEXT_DIM};
         }}
 
+        /* Settings › Exceptions search box - same look as #confirmTyped */
+        QLineEdit#exceptionsSearch {{
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid {BORDER};
+            border-radius: 4px;
+            padding: 6px;
+            color: {TEXT};
+        }}
+
+        QLineEdit#exceptionsSearch:focus {{
+            border-color: {NEON};
+        }}
+
         /* ─── Confirmation dialog (dialogs.py) ─── */
         QDialog#confirmDialog {{
             background: {PANEL_SOLID};
