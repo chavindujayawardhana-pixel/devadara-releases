@@ -46,7 +46,19 @@ a = Analysis(
     pathex=[ROOT],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    # The ML model is a pickled sklearn RandomForestClassifier: unpickling
+    # it needs sklearn's forest/tree modules, but no app code imports
+    # sklearn (only train_model.py does), so PyInstaller can't see them.
+    # joblib/pandas are imported lazily inside ml_scanner functions -
+    # listed too so a refactor can't silently drop them.
+    hiddenimports=[
+        "sklearn.ensemble",
+        "sklearn.ensemble._forest",
+        "sklearn.tree",
+        "sklearn.tree._classes",
+        "joblib",
+        "pandas",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
