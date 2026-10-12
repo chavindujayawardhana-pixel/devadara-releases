@@ -13,4 +13,4 @@ Paste the 64-character hex string tools/integrity_keygen.py prints, e.g.
     PUBLIC_KEY = "3f1c...a9"   # SHA256 fingerprint: ...
 """
 
-PUBLIC_KEY = None
+PUBLIC_KEY = "54dea95589550b1b4399c971a55952177f2794c31d31114f29bb211931bf364a"
