@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from devadara import ignore_list, quarantine, scan_log, self_integrity, verdict_labels
+from devadara import ignore_list, memory, quarantine, scan_log, self_integrity, verdict_labels
 from devadara.hash_scanner import compute_sha256
 from devadara import hidden_file_scanner
 from devadara.hidden_file_scanner import describe_attributes
@@ -55,6 +55,10 @@ from devadara_gui.process_guard import refusal_reason, still_same_process
 THREAT_TIERS = ("known_bad", "malware", "suspicious")
 SYSTEM_ROOT = os.path.normcase(os.path.abspath(os.environ.get("SystemRoot", r"C:\Windows")))
 LARGE_FILE_BYTES = 200 * 1024 * 1024  # quarantine reads the whole file into memory
+# Every confirmed GUI quarantine also remembers the file's fingerprint
+# (devadara/memory.py); Restore forgets it again.
+REMEMBER_SENTENCE = ("DEVADARA will also remember its fingerprint, so the same file is "
+                     "recognised instantly by later scans.")
 DELETE_DISABLED_TIP = ("Disabled in Settings › General › Auto-delete (Never). "
                        "Quarantine and Restore still work.")
 DELETE_DISABLED_NOTE = "// turned off in Settings"
@@ -792,11 +796,56 @@ class ResultsPage(QWidget):
         large = [i for i in allowed if os.path.getsize(i["file_path"]) > LARGE_FILE_BYTES]
         return f"{len(large)} large file(s): DEVADARA may pause while it encrypts them." if large else ""
 
+    @staticmethod
+    def _memory_name(item):
+        """The remembered threat's name, in the CLI scripts' shape:
+        "<Hash|YARA|ML>-flagged (<tier>): <file name>"."""
+        name = os.path.basename(item["file_path"]) or item["file_path"]
+        tier = item.get("tier")
+        if tier == "known_bad":
+            label = "Hash"
+        elif "YARA" in (item.get("threat") or ""):
+            label = "YARA"
+        elif tier in ("malware", "suspicious"):
+            label = "ML"
+        else:
+            return f"User-confirmed: {name}"
+        return f"{label}-flagged ({tier}): {name}"
+
+    @staticmethod
+    def _remember(file_hash, threat_name):
+        """Best effort: a confirmed quarantine is remembered so later scans
+        recognise the same content instantly. Never blocks or reports -
+        a failure here just means it isn't remembered."""
+        if not file_hash:
+            return
+        try:
+            memory.remember_threat(file_hash, threat_name=threat_name, source="user_confirmed")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _forget(file_hash):
+        """Best effort, after a successful Restore - unless another
+        quarantined copy of the same content is still in quarantine."""
+        if not file_hash:
+            return
+        try:
+            if any(e.get("hash") == file_hash for e in quarantine.list_quarantined()):
+                return
+            memory.forget_threat(file_hash)
+        except Exception:
+            pass
+
     def _run_quarantine(self, allowed, refused, tab):
         """Quarantine already-confirmed files and report. Returns the items
-        actually quarantined (original gone from its location)."""
+        actually quarantined (original gone from its location) - and
+        remembers each one's fingerprint (memory_hashes.json)."""
         done, in_use, failed = [], [], []
         for item in allowed:
+            # The content actually being quarantined (it may have changed
+            # since the scan) - this is what gets remembered.
+            fresh_hash = compute_sha256(item["file_path"])
             entry_id = quarantine.quarantine_file(
                 item["file_path"], file_hash=item.get("hash"), threat_name=item.get("threat"),
                 tier=item.get("tier"), source="results_page")
@@ -808,6 +857,7 @@ class ResultsPage(QWidget):
                 in_use.append(item)
             else:
                 done.append(item)
+                self._remember(fresh_hash, self._memory_name(item))
         text = f"// quarantined {len(done)} file(s)"
         if in_use:
             text += (f" — {len(in_use)} still on disk (in use by a program?): an encrypted copy is in "
@@ -828,7 +878,7 @@ class ResultsPage(QWidget):
         n = len(allowed)
         message = ("This encrypts each file and moves it into DEVADARA's quarantine folder, so it "
                    "can't be opened or run. Nothing is deleted - you can restore it later from the "
-                   "Quarantine tab.")
+                   "Quarantine tab. " + REMEMBER_SENTENCE)
         notes = [self._large_file_note(allowed)]
         if refused:
             notes.append("Skipped, never touched: " + self._refused_text(refused))
@@ -922,7 +972,7 @@ class ResultsPage(QWidget):
                    "QUARANTINES THAT TARGET FILE: it is encrypted and moved into quarantine "
                    "(restorable later from the Quarantine tab). The startup entry itself is NOT "
                    "changed or deleted - afterwards it points to a missing file, which is harmless. "
-                   f"To remove the entry yourself: {hint}.")
+                   f"To remove the entry yourself: {hint}. " + REMEMBER_SENTENCE)
         notes = [self._large_file_note(allowed)]
         if any(_norm(target).startswith(pf + os.sep) for pf in PROGRAM_FILES):
             notes.append("This target is an installed program (Program Files) - make sure it isn't "
@@ -995,9 +1045,10 @@ class ResultsPage(QWidget):
             return
         n = len(allowed)
         message = ("This decrypts each file and puts it back at its original location, where it "
-                   "can be opened and run again. Only restore a file you are sure is safe. If it "
-                   "was flagged by its fingerprint, the next scan will flag it again unless you "
-                   "also choose Ignore for it on the Virus tab.")
+                   "can be opened and run again. Only restore a file you are sure is safe. "
+                   "DEVADARA also forgets its fingerprint. If a scan rule or DEVADARA's built-in "
+                   "threat list flags it, the next scan will flag it again unless you also choose "
+                   "Ignore for it on the Virus tab.")
         details = ("Skipped, left in quarantine: " + self._refused_text(refused)) if refused else ""
         if not dialogs.confirm(self, f"Restore {n} file(s) from quarantine?", message, "Restore",
                                items=[e["original_path"] for e in allowed], details=details):
@@ -1005,6 +1056,10 @@ class ResultsPage(QWidget):
         done, failed = [], []
         for entry in allowed:
             (done if quarantine.restore_file(entry["id"]) else failed).append(entry)
+        for entry in done:
+            # The content just put back - a wrongly quarantined file isn't
+            # remembered forever.
+            self._forget(compute_sha256(entry["original_path"]))
         self.refresh()
         text = f"// restored {len(done)} file(s) to their original location"
         if failed:

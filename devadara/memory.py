@@ -18,6 +18,7 @@ manages DEVADARA's own local JSON memory.
 
 import json
 import os
+import shutil
 import sys
 from datetime import datetime
 
@@ -58,16 +59,32 @@ def load_memory():
 
     If the file doesn't exist yet or is empty/corrupted, we return an empty
     dictionary rather than crashing - a fresh memory is safer than a crash.
+    Entries that aren't objects are dropped (get_combined_known_bad_hashes()
+    runs before every scan and must never trip over one).
     """
-    if not os.path.exists(MEMORY_PATH):
-        return {}
+    memory, broken = _read_memory_file()
+    if broken:
+        print(f"[WARNING] Could not parse memory file at {MEMORY_PATH}, starting fresh.")
+    return memory
 
+
+def _read_memory_file():
+    """(memory, broken) straight from disk; a missing file isn't broken."""
     try:
         with open(MEMORY_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        print(f"[WARNING] Could not parse memory file at {MEMORY_PATH}, starting fresh.")
-        return {}
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {}, False
+    except (OSError, ValueError):
+        return {}, True
+    if not isinstance(raw, dict):
+        return {}, True
+    memory = {}
+    for file_hash, entry in raw.items():
+        if isinstance(entry, dict):
+            entry.setdefault("threat_name", "remembered threat")
+            memory[file_hash] = entry
+    return memory, False
 
 
 def save_memory(memory):
@@ -77,9 +94,15 @@ def save_memory(memory):
     We write to a temporary file first, then rename it into place with
     os.replace(). This avoids corrupting memory_hashes.json if the program
     crashes or is closed partway through writing - a half-written JSON
-    file would break every future scan otherwise.
+    file would break every future scan otherwise. A broken file already on
+    disk is kept as memory_hashes.json.broken once, never silently lost.
     """
     os.makedirs(os.path.dirname(MEMORY_PATH), exist_ok=True)
+    if os.path.exists(MEMORY_PATH) and _read_memory_file()[1]:
+        try:
+            shutil.copy2(MEMORY_PATH, MEMORY_PATH + ".broken")
+        except OSError:
+            pass
     temp_path = MEMORY_PATH + ".tmp"
 
     with open(temp_path, "w", encoding="utf-8") as f:
