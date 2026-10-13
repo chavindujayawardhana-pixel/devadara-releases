@@ -50,6 +50,7 @@ Other features:
 - **Running processes.** Looks for simple warning signs, such as a program running from an odd folder or a document app starting a command shell.
 - **Hidden files.** Lists hidden files found during a scan. You can unhide them.
 - **Quarantine.** Encrypts a flagged file and moves it away. You can restore it at any time.
+- **Exceptions.** In Settings you can view, search and remove ignored files, or pick a single file to ignore (not whole folders). A file stays ignored only while its content is unchanged.
 - **Downloads auto-scan.** Scans each new file once it has fully finished downloading.
 - **USB auto-scan.** Scans a removable drive as soon as it is plugged in.
 - **Behavior monitoring.** Watches your Downloads folder. If 20 or more file changes happen within 5 seconds, it shows a warning that this *may* be ransomware-like activity. It also makes a best guess at which program has files open there. It never acts on its own. You can suspend or stop a listed program, but only after you confirm. Windows' own system processes are protected.
@@ -106,7 +107,6 @@ Note: the app's own Ed25519 self-integrity check is **not** the same as a Window
 
 ## Roadmap (not built yet)
 
-- Settings → Exceptions: a way to manage ignored files and folders
 - Scanning inside archives (zip and others)
 
 ## About the author
