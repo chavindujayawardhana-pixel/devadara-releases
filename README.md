@@ -105,6 +105,14 @@ Note: the app's own Ed25519 self-integrity check is **not** the same as a Window
 - Behavior monitoring watches only the Downloads folder. Its guess about which program caused the changes is best-effort and can be empty.
 - It is not a replacement for Microsoft Defender or other full antivirus products.
 
+## Security review (in progress)
+
+An external review of v1.0.0 raised four points: the order of steps when a file is quarantined, how the ML model file is loaded, how much real-world malware the current layers can catch, and cases where a check fails quietly without telling the user. I am verifying each point against the code. Anything I confirm will be fixed in v1.0.1, and this section will be updated with what I found and changed. Until then, please treat v1.0.0 as an early learning release.
+
+## License
+
+This project is released under the MIT License. See the [LICENSE](LICENSE) file. Third-party components such as YARA, scikit-learn and PySide6 keep their own licenses.
+
 ## Roadmap (not built yet)
 
 - Scanning inside archives (zip and others)
